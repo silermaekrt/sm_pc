@@ -1,0 +1,33 @@
+# 私募排排网抓取工具依赖
+# ========== 基础依赖 ==========
+playwright>=1.40.0
+python-dotenv>=1.0.0
+pandas>=2.0.0
+requests>=2.31.0
+
+# ========== OCR 依赖 ==========
+pytesseract>=0.3.10
+Pillow>=10.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# ========== Flask Web 框架 ==========
+flask>=3.0.0
+flask-sqlalchemy>=3.1.0
+
+# ========== 定时任务 ==========
+apscheduler>=3.10.0
+
+# ========== Excel 导出 ==========
+openpyxl>=3.1.0
+
+# ========== 安装方法 ==========
+# pip install -r requirements.txt
+#
+# playwright 浏览器安装（首次运行前必须执行一次）:
+# python -m playwright install chromium
+#
+# Tesseract OCR:
+# 安装路径: D:\tools\tesseract_ocr
+# 建议下载中文语言包: https://github.com/tesseract-ocr/tessdata
+# 将 chi_sim.traineddata 放入 tessdata 目录可提升中文识别

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>私募基金监控平台</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- 顶部导航 -->
+        <header class="header">
+            <div class="header-left">
+                <h1>私募基金监控平台</h1>
+            </div>
+            <div class="header-right">
+                <span class="status-indicator" id="crawlStatus">
+                    <span class="dot"></span>
+                    <span class="status-text">空闲</span>
+                </span>
+                <button class="btn btn-primary" id="triggerCrawlBtn" onclick="triggerCrawl()">
+                    触发抓取
+                </button>
+                <button class="btn btn-secondary" onclick="location.href='/stats'">
+                    统计分析
+                </button>
+            </div>
+        </header>
+
+        <!-- 统计卡片 -->
+        <div class="stats-cards">
+            <div class="stat-card">
+                <div class="stat-label">基金总数</div>
+                <div class="stat-value" id="totalFunds">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">今日爬取</div>
+                <div class="stat-value" id="todayCrawl">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">最近爬取</div>
+                <div class="stat-value" id="lastCrawl">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">总爬取次数</div>
+                <div class="stat-value" id="totalCrawls">-</div>
+            </div>
+        </div>
+
+        <!-- 搜索和筛选 -->
+        <div class="toolbar">
+            <div class="toolbar-left">
+                <div class="search-box">
+                    <input type="text" id="searchInput" placeholder="搜索基金名称..." oninput="debounceSearch()">
+                </div>
+                <div class="filter-box">
+                    <select id="dateFilter" onchange="loadFunds(1)">
+                        <option value="">全部日期</option>
+                    </select>
+                </div>
+                <div class="filter-box">
+                    <select id="sortSelect" onchange="loadFunds(1)">
+                        <option value="crawl_time-desc">按爬取时间 (最新)</option>
+                        <option value="crawl_time-asc">按爬取时间 (最早)</option>
+                        <option value="fund_name-asc">按基金名称 (A-Z)</option>
+                        <option value="this_year-desc">按今年来 (降序)</option>
+                        <option value="three_year-desc">按近三年 (降序)</option>
+                        <option value="drawdown-asc">按回撤 (升序)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="toolbar-right">
+                <div class="export-dropdown">
+                    <button class="btn btn-secondary" onclick="toggleExportMenu()">
+                        导出数据 ▾
+                    </button>
+                    <div class="dropdown-menu" id="exportMenu" style="display:none;">
+                        <a href="#" onclick="exportData('csv'); return false;">📄 导出 CSV</a>
+                        <a href="#" onclick="exportData('json'); return false;">📋 导出 JSON</a>
+                        <a href="#" onclick="exportData('xlsx'); return false;">📊 导出 Excel</a>
+                    </div>
+                </div>
+                <button class="btn btn-secondary" onclick="showLoginModal()">
+                    🔐 登录设置
+                </button>
+            </div>
+        </div>
+
+        <!-- 数据表格 -->
+        <div class="card">
+            <div class="card-header">
+                <h2>基金列表</h2>
+                <span class="record-count" id="recordCount">共 0 条记录</span>
+            </div>
+            <div class="table-wrapper">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>基金名称</th>
+                            <th>基金代码</th>
+                            <th>策略</th>
+                            <th>净值日期</th>
+                            <th>最新净值</th>
+                            <th>今年来</th>
+                            <th>近一年</th>
+                            <th>近三年</th>
+                            <th>成立来</th>
+                            <th>回撤</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="fundTableBody">
+                        <tr>
+                            <td colspan="11" class="loading-cell">
+                                <div class="loading">加载中...</div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 分页 -->
+            <div class="pagination" id="pagination"></div>
+        </div>
+
+        <!-- 基金详情弹窗 -->
+        <div class="modal" id="fundDetailModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="modalFundName">基金详情</h3>
+                    <button class="modal-close" onclick="closeModal()">&times;</button>
+                </div>
+                <div class="modal-body" id="modalBody">
+                    <!-- 动态内容 -->
+                </div>
+            </div>
+        </div>
+
+        <!-- 登录设置弹窗 -->
+        <div class="modal" id="loginModal">
+            <div class="modal-content" style="max-width:480px;">
+                <div class="modal-header">
+                    <h3>🔐 自动登录设置</h3>
+                    <button class="modal-close" onclick="closeLoginModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="login-hint">
+                        保存私募排排网用户名密码后，系统将自动刷新 Cookie，无需手动更新。
+                    </p>
+                    <form id="loginForm" onsubmit="submitLogin(event)">
+                        <div class="form-group">
+                            <label>用户名</label>
+                            <input type="text" id="loginUsername" placeholder="请输入用户名" required>
+                        </div>
+                        <div class="form-group">
+                            <label>密码</label>
+                            <input type="password" id="loginPassword" placeholder="请输入密码" required>
+                        </div>
+                        <div class="form-group">
+                            <label>刷新间隔（分钟）</label>
+                            <input type="number" id="loginInterval" value="60" min="10" max="1440">
+                            <small>Cookie 过期前自动刷新，建议 60 分钟</small>
+                        </div>
+                        <div class="form-status" id="loginStatus"></div>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" onclick="manualRefreshCookies()">立即刷新</button>
+                            <button type="submit" class="btn btn-primary">保存设置</button>
+                        </div>
+                    </form>
+                    <div class="login-credential-status" id="credentialStatus"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/main.js"></script>
+    <script>
+        // 页面加载时初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStats();
+            loadFunds(1);
+            startStatusPolling();
+        });
+    </script>
+</body>
+</html>
