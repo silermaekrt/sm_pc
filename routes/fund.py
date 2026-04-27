@@ -42,7 +42,12 @@ def get_funds():
         query = query.filter(Fund.fund_name.contains(search))
 
     if crawl_date:
-        query = query.filter(Fund.crawl_date == crawl_date)
+        try:
+            from datetime import date as date_type
+            filter_date = date_type.fromisoformat(crawl_date)
+            query = query.filter(Fund.crawl_date == filter_date)
+        except ValueError:
+            pass
 
     if hasattr(Fund, sort):
         sort_column = getattr(Fund, sort)
@@ -116,9 +121,11 @@ def get_stats_summary():
         CrawlRecord.start_time.desc()
     ).first()
 
-    today = datetime.now().strftime("%Y%m%d")
+    today = datetime.now().strftime("%Y-%m-%d")
+    from datetime import date as date_type
+    today_date = date_type.fromisoformat(today)
     today_crawl = CrawlRecord.query.filter(
-        CrawlRecord.crawl_date == today
+        CrawlRecord.crawl_date == today_date
     ).first()
 
     return jsonify({

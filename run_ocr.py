@@ -415,9 +415,11 @@ def _recognize_net_values(
     fund_positions: list,
     table_info: dict,
     table_screenshot_path: str,
+    actual_fund_count: int,
 ) -> tuple:
     """
     对表格截图进行 OCR 识别净值。
+    actual_fund_count: 实际解析出的基金行数（用于统计分母）
     返回 (ocr_results dict, failed list)
     """
     if pytesseract is None or not table_screenshot_path or not os.path.exists(table_screenshot_path):
@@ -480,7 +482,7 @@ def _recognize_net_values(
 
     success_count = len(ocr_results)
     fail_count = len(ocr_failed_list)
-    total_count = len(fund_positions)
+    total_count = actual_fund_count
 
     logger.info(f"OCR 识别完成：{success_count}/{total_count} 成功，{fail_count} 失败")
 
@@ -688,19 +690,25 @@ def crawl(use_ocr: bool = True):
                 logger.error(f"重试次数用尽，最终失败: {e}")
                 raise CrawlFailedError(f"抓取失败: {e}", e)
 
+    # 解析
+    ocr_results = {}  # 空结果，OCR 完成后会更新
+    funds, parse_errors = _parse_funds(rows_data, ocr_results)
+
+    if not funds:
+        raise CrawlFailedError("未提取到任何有效基金数据", crawl_error or "unknown")
+
+    actual_fund_count = len(funds)
+
     # OCR 识别
     ocr_results = {}
     ocr_failed_list = []
     if use_ocr and pytesseract:
         ocr_results, ocr_failed_list = _recognize_net_values(
-            pytesseract, fund_positions, table_info, table_screenshot_path
+            pytesseract, fund_positions, table_info, table_screenshot_path, actual_fund_count
         )
-
-    # 解析
-    funds, parse_errors = _parse_funds(rows_data, ocr_results)
-
-    if not funds:
-        raise CrawlFailedError("未提取到任何有效基金数据", crawl_error or "unknown")
+        # 用 OCR 结果更新已解析的基金净值
+        for fund in funds:
+            fund["最新净值"] = ocr_results.get(fund["基金名称"], fund["最新净值"])
 
     # 保存
     csv_path = _save_funds_csv(funds)

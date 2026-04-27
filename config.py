@@ -38,8 +38,8 @@ def _detect_tesseract_path() -> str:
         return env_path
 
     if sys.platform == "win32":
-        for base in [r"C:\Program Files", r"C:\Program Files (x86)", r"D:\tools"]:
-            for ver in ["", "_ocr", r"Tesseract-OCR", r"Tesseract"]:
+        for base in [r"C:\Program Files", r"C:\Program Files (x86)", r"D:\tools", r"D:\software"]:
+            for ver in ["", "_ocr", r"Tesseract-OCR", r"Tesseract","tesseract"]:
                 candidate = os.path.join(base, ver, "tesseract.exe")
                 if os.path.isfile(candidate):
                     return os.path.dirname(candidate)

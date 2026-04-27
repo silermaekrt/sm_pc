@@ -51,10 +51,12 @@ def _run_crawl_task_inner(use_ocr: bool = True):
     crawl_status["last_error"] = None
 
     date_str = datetime.now().strftime("%Y%m%d")
-    crawl_date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    crawl_date_str = datetime.now().strftime("%Y-%m-%d")
+    crawl_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    crawl_date_obj = datetime.now().date()
 
     record = CrawlRecord(
-        crawl_date=date_str,
+        crawl_date=crawl_date_obj,
         start_time=datetime.now(),
         status="running"
     )
@@ -76,7 +78,7 @@ def _run_crawl_task_inner(use_ocr: bool = True):
         record.ocr_success = crawl_result.get("ocr_success", 0)
         db.session.commit()
 
-        crawl_status["last_crawl"] = crawl_date_str
+        crawl_status["last_crawl"] = crawl_time_str
         logger.info(
             f"[爬虫任务 {record_id}] 完成，导入 {imported} 条数据 "
             f"(OCR 成功 {crawl_result.get('ocr_success', 0)} 条)"
@@ -131,9 +133,12 @@ def _run_crawl_task_inner(use_ocr: bool = True):
 def _import_csv_to_db(date_str: str) -> int:
     """
     将爬虫生成的 CSV 文件导入数据库。
+    date_str: 标准日期格式 "YYYY-MM-DD"
     返回导入的记录数。
     """
-    csv_path = os.path.join(config.DATA_DIR, f"simu_option_{date_str}.csv")
+    from datetime import date as date_type
+    filter_date = date_type.fromisoformat(date_str)
+    csv_path = os.path.join(config.DATA_DIR, f"simu_option_{date_str.replace('-', '')}.csv")
 
     if not os.path.exists(csv_path):
         logger.warning(f"CSV 文件不存在: {csv_path}")
@@ -145,7 +150,7 @@ def _import_csv_to_db(date_str: str) -> int:
         df = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
         logger.info(f"读取 CSV: {csv_path}, 共 {len(df)} 条记录")
 
-        Fund.query.filter(Fund.crawl_date == date_str).delete()
+        Fund.query.filter(Fund.crawl_date == filter_date).delete()
 
         funds = []
         for _, row in df.iterrows():
@@ -178,7 +183,7 @@ def _import_csv_to_db(date_str: str) -> int:
                 this_week=_v(row.get("本周", "")),
                 this_week_range=_v(row.get("本周区间", "")),
                 drawdown=_v(row.get("回撤", "")),
-                crawl_date=date_str,
+                crawl_date=filter_date,
             )
             funds.append(fund)
 

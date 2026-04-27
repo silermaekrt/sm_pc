@@ -45,7 +45,7 @@ if __name__ == "__main__":
     if "--debug" not in sys.argv:
         try:
             from tasks.crawl_task import init_scheduler
-            scheduler = init_scheduler()
+            scheduler = init_scheduler(app=app)
         except Exception as e:
             logger.warning(f"定时任务调度器启动失败: {e}")
 

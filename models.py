@@ -43,7 +43,7 @@ class Fund(db.Model):
     this_week_range = db.Column(db.String(50), comment="本周区间")
     drawdown = db.Column(db.String(20), comment="回撤")
     crawl_time = db.Column(db.DateTime, default=datetime.now, comment="爬取时间")
-    crawl_date = db.Column(db.String(20), comment="爬取日期（用于去重）")
+    crawl_date = db.Column(db.Date, comment="爬取日期（用于去重）")
 
     __table_args__ = (
         db.Index("idx_fund_name", "fund_name"),
@@ -78,8 +78,8 @@ class Fund(db.Model):
             "this_week": self.this_week or "",
             "this_week_range": self.this_week_range or "",
             "drawdown": self.drawdown or "",
-            "crawl_time": self.crawl_time.isoformat() if self.crawl_time else "",
-            "crawl_date": self.crawl_date or "",
+            "crawl_time": self.crawl_time.strftime("%Y-%m-%d %H:%M:%S") if self.crawl_time else "",
+            "crawl_date": self.crawl_date.strftime("%Y-%m-%d") if self.crawl_date else "",
         }
 
 
@@ -91,7 +91,7 @@ class CrawlRecord(db.Model):
     __tablename__ = "crawl_records"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    crawl_date = db.Column(db.String(20), nullable=False, comment="爬取日期")
+    crawl_date = db.Column(db.Date, nullable=False, comment="爬取日期")
     start_time = db.Column(db.DateTime, default=datetime.now, comment="开始时间")
     end_time = db.Column(db.DateTime, comment="结束时间")
     status = db.Column(db.String(20), default="running", comment="状态: running/success/failed")
@@ -102,9 +102,9 @@ class CrawlRecord(db.Model):
     def to_dict(self):
         return {
             "id": self.id,
-            "crawl_date": self.crawl_date,
-            "start_time": self.start_time.isoformat() if self.start_time else "",
-            "end_time": self.end_time.isoformat() if self.end_time else "",
+            "crawl_date": self.crawl_date.strftime("%Y-%m-%d") if self.crawl_date else "",
+            "start_time": self.start_time.strftime("%Y-%m-%d %H:%M:%S") if self.start_time else "",
+            "end_time": self.end_time.strftime("%Y-%m-%d %H:%M:%S") if self.end_time else "",
             "status": self.status,
             "total_funds": self.total_funds,
             "ocr_success": self.ocr_success,

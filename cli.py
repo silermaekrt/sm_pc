@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 def cmd_status(args):
     """查看爬虫状态"""
-    from app import db, CrawlRecord
+    from app import CrawlRecord
 
     with app.app_context():
         latest = CrawlRecord.query.order_by(CrawlRecord.start_time.desc()).first()
