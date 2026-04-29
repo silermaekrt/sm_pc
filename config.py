@@ -31,6 +31,26 @@ FUND_TYPES = [
 ALL_TAG_KEYS = [t["key"] for t in FUND_TYPES]
 
 
+def get_fund_type_map():
+    """
+    从 FUND_TYPES 配置中生成 key 到 name 的映射字典
+
+    Returns:
+        dict: {key: name} 格式的字典，如 {"private": "私募", "public": "公募", "money": "货币"}
+    """
+    return {fund_type["key"]: fund_type["name"] for fund_type in FUND_TYPES}
+
+
+def get_fund_type_lists():
+    """
+    从 FUND_TYPES 配置中提取 key 和 name 列表
+
+    Returns:
+        tuple: (keys_list, names_list) - key列表和name列表的元组
+    """
+    keys = [fund_type["key"] for fund_type in FUND_TYPES]
+    names = [fund_type["name"] for fund_type in FUND_TYPES]
+    return keys, names
 def get_tag_model_map():
     """
     获取标签到模型的映射（统一使用 Fund 模型）。

@@ -39,8 +39,9 @@ if not config.get_raw_cookie():
 
 
 # ===================== 模块级常量 =====================
-_TAG_KEYWORD_MAP = {"private": "私募", "public": "公募", "money": "货币"}
-
+_TAG_KEYWORD_MAP = config.get_fund_type_map()
+_TAG_KEY_LIST=config.get_fund_type_lists()[0]
+_TAG_VALUE_LIST=config.get_fund_type_lists()[1]
 
 # ===================== 异常类型 =====================
 PLAYWRIGHT_RETRY_EXCEPTIONS = (
@@ -160,14 +161,27 @@ def _safe_filename(name: str) -> str:
 def _switch_to_tag(page, tag: str) -> bool:
     """
     切换到指定标签页。
-    tag 支持: "private", "public", "money"
+    tag
     返回 True 表示成功，False 表示标签不存在或切换失败。
     """
     tab_keyword = _TAG_KEYWORD_MAP.get(tag, tag)
-
+    print(tab_keyword)
     try:
-        page.locator(".xs-nav-item").filter(has_text=tab_keyword).first.click()
+        page.evaluate('''(kw) => {
+                   const tabs = document.querySelectorAll('.xs-nav-item');
+                   tabs.forEach(t => {
+                       if(t.innerText.includes(kw)) t.click();
+                   });
+               }''', tab_keyword)
+
+        # 2. 【关键】等待标签变成【选中状态】，确保页面真切换了
+        page.wait_for_selector(
+            f'.xs-nav-item.is-active:text("({tab_keyword})"), .xs-nav-item.active:text("{tab_keyword}")',
+            timeout=3000
+        )
+
         logger.info(f"已点击标签: {tab_keyword!r}")
+
         page.wait_for_timeout(config.TAB_SWITCH_WAIT_TIME)
         return True
 
@@ -177,25 +191,21 @@ def _switch_to_tag(page, tag: str) -> bool:
 
 
 def _ensure_tag_exists(page, tag: str) -> bool:
-    """
-    验证指定标签页是否存在。
-    tag 支持: "private", "public", "money"
-    返回 True 表示标签存在，False 表示标签不存在。
-    """
+    """验证指定标签页是否存在"""
     tab_keyword = _TAG_KEYWORD_MAP.get(tag, tag)
-
     try:
-        count = page.locator(".xs-nav-item").filter(has_text=tab_keyword).count()
-        if count > 0:
-            return True
-        logger.warning(f"标签 '{tab_keyword}' 不存在")
-        available = list(_TAG_KEYWORD_MAP.values())
-        logger.warning(f"可用标签: {available}")
-        return False
+        exists = page.evaluate(
+            f'''() => {{
+                return Array.from(document.querySelectorAll(".xs-nav-item"))
+                    .some(el => el.innerText.includes("{tab_keyword}"));
+            }}'''
+        )
+        if not exists:
+            logger.warning(f"标签 '{tab_keyword}' 不存在")
+        return exists
     except Exception as e:
         logger.warning(f"检查标签 '{tab_keyword}' 时出错: {e}")
         return False
-
 
 def _setup_cookies(context):
     """设置 Cookie，统一处理异常"""
@@ -261,20 +271,28 @@ def _init_tesseract():
     return pytesseract
 
 
-def _navigate_and_wait(page, tag: str = "private"):
-    """跳转到目标页面，切换标签，等待表格加载"""
+def _navigate_and_wait(page, tag: str = "private") -> dict:
+    """
+    跳转到目标页面，切换标签，等待表格加载，提取位置/表格信息/文本数据。
+
+    标签切换完成并稳定后，才执行数据提取，确保用的是切换后页面的坐标和文本。
+
+    返回 dict:
+      - has_data: bool
+      - tag: str
+      - fund_positions: list
+      - table_info: dict | None
+      - rows_data: list
+    """
     try:
         page.goto(config.SIMU_URL, wait_until=config.CRAWL.PAGE_LOAD_WAIT, timeout=config.GOTO_TIMEOUT)
         logger.info(f"页面加载完成: {page.title()}")
     except PlaywrightError as e:
         raise PageLoadError(f"页面加载失败: {e}", url=config.SIMU_URL, timeout=config.GOTO_TIMEOUT)
 
-    # 切换标签前先验证标签是否存在
-    if tag != "private":
-        if not _ensure_tag_exists(page, tag):
-            raise TagNotFoundError(tag=tag, available_tags=["private", "public", "money"])
-        if not _switch_to_tag(page, tag):
-            raise TagNotFoundError(tag=tag, available_tags=["private", "public", "money"])
+    page.set_viewport_size(
+        {"width": config.VIEWPORT_WIDTH, "height": config.VIEWPORT_HEIGHT}
+    )
 
     try:
         page.wait_for_selector(config.CRAWL.TABLE_ROW_SELECTOR, timeout=config.SELECTOR_TIMEOUT)
@@ -285,11 +303,37 @@ def _navigate_and_wait(page, tag: str = "private"):
             selector=config.CRAWL.TABLE_ROW_SELECTOR,
         )
 
-    page.wait_for_timeout(config.PAGE_WAIT_TIME)
-    page.set_viewport_size(
-        {"width": config.VIEWPORT_WIDTH, "height": config.VIEWPORT_HEIGHT}
-    )
     page.wait_for_timeout(config.VIEWPORT_WAIT_TIME)
+
+    if tag != "private":
+        if not _ensure_tag_exists(page, tag):
+            raise TagNotFoundError(tag=tag, available_tags=_TAG_KEY_LIST)
+        if not _switch_to_tag(page, tag):
+            raise TagNotFoundError(tag=tag, available_tags=_TAG_KEY_LIST)
+        try:
+            page.wait_for_selector(
+                f"{config.CRAWL.TABLE_ROW_SELECTOR}:visible",
+                timeout=config.SELECTOR_TIMEOUT,
+            )
+            page.wait_for_timeout(config.PAGE_WAIT_TIME)
+        except PlaywrightError:
+            logger.warning(f"切换标签 '{tag}' 后表格未出现，该标签无可见数据")
+
+
+    fund_positions = _extract_positions(page)
+    table_info = _get_table_info(page)
+    rows_data = _extract_text_data(page)
+    print("fund_positions:", fund_positions)
+    logger.info(f"数据提取完成: {len(rows_data)} 行")
+    print("table_info:", table_info)
+
+    return {
+        "has_data": True,
+        "tag": tag,
+        "fund_positions": fund_positions,
+        "table_info": table_info,
+        "rows_data": rows_data,
+    }
 
 
 def _extract_positions(page) -> list:
@@ -299,6 +343,10 @@ def _extract_positions(page) -> list:
             """
 () => {
     const rows = Array.from(document.querySelectorAll('tbody tr.el-table__row'));
+    const visibleRows = rows.filter(row => {
+        const style = row.getAttribute('style') || '';
+        return !style.includes('display: none');
+    });
     const positions = [];
 
     const headerCells = document.querySelectorAll('thead th');
@@ -311,7 +359,7 @@ def _extract_positions(page) -> list:
         }
     }
 
-    for (const row of rows) {
+    for (const row of visibleRows) {
         const cells = row.querySelectorAll('td');
         if (cells.length < 2) continue;
 
@@ -380,22 +428,47 @@ def _extract_positions(page) -> list:
     return positions
 
 
-def _get_table_info(page) -> dict:
-    """获取表格区域信息"""
-    return page.evaluate(
+def _get_table_info(page) -> dict | None:
+    """获取表格区域信息，若表格不可见则返回 None"""
+    info = page.evaluate(
         """
 () => {
-    const table = document.querySelector('.el-table__body-wrapper');
-    if (!table) return null;
-    const rect = table.getBoundingClientRect();
-    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    // 查找 祖先节点没有被隐藏 的那个表格
+    const allTables = document.querySelectorAll('.el-table__body-wrapper');
+    for (const table of allTables) {
+        let parent = table;
+        let isHidden = false;
+        // 向上查找3层，判断是否被隐藏
+        for (let i = 0; i < 5; i++) {
+            if (!parent) break;
+            const style = parent.style.display || '';
+            if (style === 'none') {
+                isHidden = true;
+                break;
+            }
+            parent = parent.parentElement;
+        }
+        if (!isHidden) {
+            const rect = table.getBoundingClientRect();
+            return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        }
+    }
+    return null;
 }
 """
     )
+    print("info",info)
+
+    if info is None or info.get("width", 0) <= 0 or info.get("height", 0) <= 0:
+        return None
+    return info
 
 
-def _capture_table_screenshot(page, table_info: dict, date_str: str = "", tag: str = "") -> str:
-    """截取表格区域并保存，返回截图路径"""
+def _capture_table_screenshot(page, table_info: dict | None, date_str: str = "", tag: str = "") -> str:
+    """截取表格区域并保存，返回截图路径。table_info 为 None 时跳过。"""
+    if table_info is None:
+        return ""
+
     clip_x = max(0, table_info["x"] - config.CROP_MARGIN)
     clip_y = max(0, table_info["y"] - config.CROP_MARGIN)
     clip_w = table_info["width"] + config.CROP_MARGIN * 2
@@ -424,18 +497,46 @@ def _capture_table_screenshot(page, table_info: dict, date_str: str = "", tag: s
 
 
 def _extract_text_data(page) -> list:
-    """从页面提取所有行的文本数据"""
+    """从页面提取所有可见行的文本数据"""
     try:
         js_code = (
-            "() => {"
-            "const rows = Array.from(document.querySelectorAll('tbody " + config.CRAWL.TABLE_ROW_SELECTOR + "'));"
-            "return rows.map(row => {"
-            "const cells = Array.from(row.querySelectorAll('td'));"
-            "return cells.map(cell => cell.innerText.trim());"
-            "}).filter(cells => cells.length >= " + str(config.COL.MIN) + ");"
-            "}"
+            """
+() => {
+    const rows = [];
+    const allRows = document.querySelectorAll('tbody """ + config.CRAWL.TABLE_ROW_SELECTOR + """');
+
+    for (const row of allRows) {
+        // 只保留：第7层父级 没有 display: none 的行
+        let el = row;
+        let hidden = false;
+
+        // 向上找 7 层父级
+        for (let i = 0; i < 8; i++) {
+            if (!el) break;
+            el = el.parentElement;
+        }
+
+        // 检查第7层父亲是否隐藏
+        if (el && el.style.display === 'none') {
+            hidden = true;
+        }
+
+        if (!hidden && !(row.getAttribute('style') || '').includes('display: none')) {
+            rows.push(row);
+        }
+    }
+
+    return rows.map(row => {
+        const cells = Array.from(row.querySelectorAll('td'));
+        return cells.map(cell => cell.innerText.trim());
+    }).filter(cells => cells.length >= """ + str(config.COL.MIN) + """);
+}
+"""
         )
+
         rows_data = page.evaluate(js_code)
+        print("rows_data",rows_data)
+        print("------------------------------------------------------")
     except PlaywrightError as e:
         raise BrowserError(f"提取文本数据失败: {e}", action="evaluate_js")
     return rows_data
@@ -447,27 +548,34 @@ def _run_browser_session(use_ocr: bool, tag: str = "private", date_str: str = ""
     返回 (fund_positions, table_info, table_screenshot_path, rows_data)
     """
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=config.CRAWL.HEADLESS)
-        context = browser.new_context(user_agent=config.USER_AGENT)
+        browser = p.chromium.launch(headless=config.CRAWL.HEADLESS,args=["--start-maximized"])
+        context = browser.new_context(user_agent=config.USER_AGENT,viewport=None)
         _setup_cookies(context)
 
         page = context.new_page()
-        _navigate_and_wait(page, tag)
+        nav_result = _navigate_and_wait(page, tag)
 
-        fund_positions = _extract_positions(page)
-        table_info = _get_table_info(page)
+        if not nav_result["has_data"]:
+            logger.warning(f"标签 '{tag}' 表格无可见数据，跳过提取")
+            return [], None, "", []
+
+        fund_positions = nav_result["fund_positions"]
+        table_info = nav_result["table_info"]
+        rows_data = nav_result["rows_data"]
 
         table_screenshot_path = ""
+        print(config.SAVE_SCREENSHOT)
+        print(table_info)
         if config.SAVE_SCREENSHOT and table_info:
+            print("开始截图...")
+            print(page, table_info,date_str, tag)
             table_screenshot_path = _capture_table_screenshot(page, table_info, date_str, tag)
-
-        rows_data = _extract_text_data(page)
 
         context.close()
         browser.close()
         logger.info("浏览器会话成功完成")
 
-    return fund_positions, table_info, table_screenshot_path, rows_data
+        return fund_positions, table_info, table_screenshot_path, rows_data
 
 
 # ===================== OCR 阶段 =====================
@@ -740,7 +848,7 @@ def crawl(use_ocr: bool = True, tag: str = "private"):
             logger.warning(f"标签 '{tag}' 不存在: {e.message}，提示用户并跳过")
             raise TagNotFoundError(
                 tag=tag,
-                available_tags=e.details.get("available_tags", ["private", "public", "money"]),
+                available_tags=e.details.get("available_tags", _TAG_KEY_LIST),
             )
 
         except (PageLoadError, ElementNotFoundError, BrowserError, ScreenshotError) as e:
@@ -765,7 +873,13 @@ def crawl(use_ocr: bool = True, tag: str = "private"):
     funds, parse_errors = _parse_funds(rows_data, {})
 
     if not funds:
-        raise CrawlFailedError("未提取到任何有效基金数据", crawl_error or "unknown")
+        logger.warning(f"标签 '{tag}' 未提取到任何基金数据（可能该标签为空或页面无数据），已跳过")
+        return {
+            "total": 0,
+            "ocr_success": 0,
+            "ocr_failed": 0,
+            "parse_errors": len(parse_errors),
+        }
 
     actual_fund_count = len(funds)
 
@@ -813,17 +927,14 @@ if __name__ == "__main__":
         description="私募排排网抓取工具（支持 OCR 净值识别）"
     )
     parser.add_argument("--all", action="store_true", help="爬取所有标签（默认）")
-    parser.add_argument("--tag", default="private", help="指定标签: private / public / money（默认 private）")
+    parser.add_argument("--tag", default="private")
     parser.add_argument("--no-ocr", action="store_true", help="禁用 OCR，仅抓取文字数据")
     args = parser.parse_args()
 
-    from config import FUND_TYPES
-    all_tags = [t["key"] for t in FUND_TYPES]
-    tags_to_crawl = all_tags if args.all else [args.tag]
     use_ocr = not args.no_ocr
 
     results = []
-    for tag in tags_to_crawl:
+    for tag in _TAG_KEY_LIST:
         print(f"\n{'='*50}")
         print(f"开始爬取标签: {tag}")
         print(f"{'='*50}")
@@ -834,7 +945,7 @@ if __name__ == "__main__":
             print(f"\n标签 {tag} 抓取完成: {result}")
         except TagNotFoundError as e:
             print(f"\n警告: 标签 '{tag}' 不存在，已跳过")
-            print(f"  可用标签: {e.details.get('available_tags', all_tags)}")
+            print(f"  可用标签: {e.details.get('available_tags', _TAG_KEY_LIST)}")
             continue
         except CrawlFailedError as e:
             print(f"\n抓取失败 [{tag}]: {e}")
