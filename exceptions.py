@@ -103,6 +103,19 @@ class ScreenshotError(CrawlerBaseError):
         super().__init__(message, code="SCREENSHOT_ERROR", details=details)
 
 
+class TagNotFoundError(CrawlerBaseError):
+    """标签（Tab）未找到"""
+    def __init__(self, tag: str, available_tags: list = None):
+        details = {"tag": tag}
+        if available_tags:
+            details["available_tags"] = available_tags
+        super().__init__(
+            message=f"标签 '{tag}' 未找到或不存在，请检查标签名称",
+            code="TAG_NOT_FOUND",
+            details=details,
+        )
+
+
 class CSVError(CrawlerBaseError):
     """CSV 文件操作错误"""
 

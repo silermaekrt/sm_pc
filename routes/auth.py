@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 auth_bp = Blueprint("auth", __name__)
 
 
+def _error(message: str, status_code: int = 400):
+    """统一错误响应格式"""
+    return jsonify({"status": "error", "message": message}), status_code
+
+
 @auth_bp.route("/login", methods=["POST"])
 def save_login_credentials():
     """
@@ -27,17 +32,17 @@ def save_login_credentials():
         refresh_interval: 刷新间隔（分钟），默认 60
     """
     if not request.json:
-        return jsonify({"error": "请提供用户名和密码"}), 400
+        return _error("请提供用户名和密码")
 
     username = request.json.get("username", "").strip()
     password = request.json.get("password", "")
     refresh_interval = request.json.get("refresh_interval", 60, type=int)
 
     if not username or not password:
-        return jsonify({"error": "用户名和密码不能为空"}), 400
+        return _error("用户名和密码不能为空")
 
     if refresh_interval < 10:
-        return jsonify({"error": "刷新间隔不能少于10分钟"}), 400
+        return _error("刷新间隔不能少于10分钟")
 
     encrypted = encrypt_password_simple(password)
 
@@ -77,9 +82,10 @@ def save_login_credentials():
             existing.last_error = error_msg
             db.session.commit()
         return jsonify({
-            "error": f"凭证保存成功，但 Cookie 刷新失败: {error_msg}",
+            "status": "partial",
+            "message": f"凭证保存成功，但 Cookie 刷新失败: {error_msg}",
             "hint": "请确认用户名密码正确，下次刷新间隔到期时会自动重试",
-        }), 200
+        })
 
 
 @auth_bp.route("/credentials", methods=["GET"])
@@ -115,12 +121,12 @@ def manual_refresh_cookies():
     """手动触发 Cookie 刷新"""
     cred = LoginCredential.query.filter_by(is_active=True).first()
     if not cred:
-        return jsonify({"error": "没有保存的登录凭证，请先调用 /api/auth/login"}), 404
+        return _error("没有保存的登录凭证，请先调用 /api/auth/login", 404)
 
     try:
         password = decrypt_password_simple(cred.password_encrypted)
     except (ValueError, TypeError):
-        return jsonify({"error": "密码解密失败，请重新保存凭证"}), 500
+        return _error("密码解密失败，请重新保存凭证", 500)
 
     success, cookies, error_msg = refresh_cookies_from_login(cred.username, password)
 
@@ -137,4 +143,4 @@ def manual_refresh_cookies():
     else:
         cred.last_error = error_msg
         db.session.commit()
-        return jsonify({"error": f"Cookie 刷新失败: {error_msg}"}), 500
+        return _error(f"Cookie 刷新失败: {error_msg}", 500)

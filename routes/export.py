@@ -1,16 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-routes/export.py - 数据导出 API 路由
+routes/export.py - 数据导出 API 路由（多标签版本）
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, date as date_type
 from flask import Blueprint, jsonify, request, Response
 
-from models import Fund, CrawlRecord
+import config
+from config import ALL_TAG_KEYS, get_tag_model_map
+from models import db, CrawlRecord
 
 logger = logging.getLogger(__name__)
 export_bp = Blueprint("export", __name__)
+
+
+def _error(message: str, status_code: int = 400):
+    """统一错误响应格式"""
+    return jsonify({"status": "error", "message": message}), status_code
+
 
 # 中文列名 → (中文名, 英文名)
 COLUMN_NAME_MAP = {
@@ -48,39 +56,46 @@ def export_data():
 
     Query Parameters:
         format: 导出格式 (csv/json/xlsx)，默认 csv
+        tag: 基金标签（private/public/money），默认 private
         crawl_date: 爬取日期筛选，默认导出最新日期
         search: 搜索关键词
     """
     export_format = request.args.get("format", "csv").lower()
+    tag = request.args.get("tag", "private", type=str)
     crawl_date = request.args.get("crawl_date", "", type=str)
     search = request.args.get("search", "", type=str)
 
     if export_format not in ("csv", "json", "xlsx"):
-        return jsonify({"error": "不支持的导出格式，仅支持 csv/json/xlsx"}), 400
+        return _error("不支持的导出格式，仅支持 csv/json/xlsx")
+
+    if tag not in ALL_TAG_KEYS:
+        return _error(f"不支持的标签 '{tag}'，可选: {ALL_TAG_KEYS}")
+
+    FundModel = get_tag_model_map()[tag]
 
     if not crawl_date:
         latest_record = CrawlRecord.query.filter(
-            CrawlRecord.status == "success"
+            CrawlRecord.tag == tag,
+            CrawlRecord.status == "success",
         ).order_by(CrawlRecord.end_time.desc()).first()
         if latest_record:
             crawl_date = latest_record.crawl_date.strftime("%Y-%m-%d")
         else:
-            return jsonify({"error": "没有可导出的数据，请先执行抓取"}), 404
+            return _error(f"标签 '{tag}' 没有可导出的数据，请先执行抓取", 404)
 
-    from datetime import date as date_type
     try:
         filter_date = date_type.fromisoformat(crawl_date)
     except ValueError:
-        return jsonify({"error": f"无效的日期格式: {crawl_date}"}), 400
+        return _error(f"无效的日期格式: {crawl_date}")
 
-    query = Fund.query.filter(Fund.crawl_date == crawl_date)
+    query = FundModel.query.filter(FundModel.crawl_date == crawl_date)
     if search:
-        query = query.filter(Fund.fund_name.contains(search))
+        query = query.filter(FundModel.fund_name.contains(search))
 
-    funds = query.order_by(Fund.fund_name.asc()).all()
+    funds = query.order_by(FundModel.fund_name.asc()).all()
 
     if not funds:
-        return jsonify({"error": f"日期 {crawl_date} 没有数据"}), 404
+        return _error(f"标签 '{tag}' 日期 {crawl_date} 没有数据", 404)
 
     import pandas as pd
     data = [f.to_dict() for f in funds]
@@ -90,8 +105,9 @@ def export_data():
     # 列名中文化
     df.rename(columns={k: f"{v[0]} ({v[1]})" for k, v in COLUMN_NAME_MAP.items() if k in df.columns}, inplace=True)
 
+    tag_name = next((t["name"] for t in config.FUND_TYPES if t["key"] == tag), tag)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename_base = f"fund_export_{crawl_date}_{timestamp}"
+    filename_base = f"fund_{tag}_{crawl_date}_{timestamp}"
 
     if export_format == "csv":
         import io
@@ -117,7 +133,7 @@ def export_data():
         import io
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="基金数据")
+            df.to_excel(writer, index=False, sheet_name=f"{tag_name}基金数据")
         output.seek(0)
         return Response(
             output.getvalue(),

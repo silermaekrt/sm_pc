@@ -18,18 +18,17 @@ from datetime import datetime
 from playwright.sync_api import sync_playwright, Error as PlaywrightError
 import config
 from exceptions import (
-    NetworkError,
     BrowserError,
     PageLoadError,
     ElementNotFoundError,
     CookieError,
     DataParseError,
-    OCRError,
     ScreenshotError,
     CSVError,
+    TagNotFoundError,
     format_error_detail,
 )
-from retry_utils import retry_on_exception, RetryContext
+from retry_utils import retry_on_exception
 
 # ===================== 日志配置 =====================
 logging.basicConfig(level=config.LOG_LEVEL, format=config.LOG_FORMAT)
@@ -37,6 +36,44 @@ logger = logging.getLogger(__name__)
 
 if not config.get_raw_cookie():
     logger.warning("SIMU_COOKIES 环境变量未设置，Cookie 将为空，可能导致抓取失败")
+
+
+# ===================== 模块级常量 =====================
+_TAG_KEYWORD_MAP = {"private": "私募", "public": "公募", "money": "货币"}
+
+# 列索引常量（用于 _parse_funds）
+_COL_IDX_FUND_NAME = 1
+_COL_IDX_NET_VALUE_DATE = 2
+_COL_IDX_NET_CHANGE = 3
+_COL_IDX_ANNUAL_RETURN = 4
+_COL_IDX_THIS_YEAR = 5
+_COL_IDX_LAST_WEEK = 6
+_COL_IDX_ONE_MONTH = 7
+_COL_IDX_THREE_MONTH = 8
+_COL_IDX_SIX_MONTH = 9
+_COL_IDX_ONE_YEAR = 10
+_COL_IDX_TWO_YEAR = 11
+_COL_IDX_THREE_YEAR = 12
+_COL_IDX_FIVE_YEAR = 13
+_COL_IDX_SINCE_INCEPTION = 14
+_COL_IDX_THIS_WEEK = 15
+_COL_IDX_DRAWDOWN = 17
+_MIN_TABLE_COLUMNS = 18  # 表格最小列数
+
+# OCR 配置
+_NET_VALUE_IMG_MIN_W = 30
+_NET_VALUE_IMG_MAX_W = 150
+_NET_VALUE_IMG_H = 8
+_NET_VALUE_IMG_FALLBACK_W = 35
+_NET_VALUE_IMG_FALLBACK_H = 20
+_NET_VALUE_DECIMAL_PLACES = 4
+
+# 浏览器配置
+_BROWSER_HEADLESS = True
+_COOKIE_DOMAIN = ".simuwang.com"
+_PAGE_LOAD_WAIT = "load"
+_TABLE_ROW_SELECTOR = "tr.el-table__row"
+_NET_VALUE_HEADER = "最新净值"
 
 
 # ===================== 异常类型 =====================
@@ -56,6 +93,14 @@ def retryable(func):
         exceptions=PLAYWRIGHT_RETRY_EXCEPTIONS,
         on_retry=lambda e, n: logger.warning(f"重试 {n}/{config.MAX_RETRIES}: {e}"),
     )
+
+
+def _log_and_sleep(attempt: int, e: Exception):
+    """记录重试日志并等待退避时间"""
+    logger.warning(f"第 {attempt}/{config.MAX_RETRIES} 次尝试失败: {e}")
+    sleep_time = config.RETRY_DELAY * (config.RETRY_BACKOFF ** (attempt - 1))
+    logger.info(f"{sleep_time:.1f} 秒后进行第 {attempt + 1} 次尝试...")
+    time.sleep(sleep_time)
 
 
 # ===================== OCR 识别 =====================
@@ -146,6 +191,46 @@ def _safe_filename(name: str) -> str:
     return name[:40]
 
 
+def _switch_to_tag(page, tag: str) -> bool:
+    """
+    切换到指定标签页。
+    tag 支持: "private", "public", "money"
+    返回 True 表示成功，False 表示标签不存在或切换失败。
+    """
+    tab_keyword = _TAG_KEYWORD_MAP.get(tag, tag)
+
+    try:
+        page.locator(".xs-nav-item").filter(has_text=tab_keyword).first.click()
+        logger.info(f"已点击标签: {tab_keyword!r}")
+        page.wait_for_timeout(config.TAB_SWITCH_WAIT_TIME)
+        return True
+
+    except Exception as e:
+        logger.warning(f"切换标签 '{tab_keyword}' 失败: {e}")
+        return False
+
+
+def _ensure_tag_exists(page, tag: str) -> bool:
+    """
+    验证指定标签页是否存在。
+    tag 支持: "private", "public", "money"
+    返回 True 表示标签存在，False 表示标签不存在。
+    """
+    tab_keyword = _TAG_KEYWORD_MAP.get(tag, tag)
+
+    try:
+        count = page.locator(".xs-nav-item").filter(has_text=tab_keyword).count()
+        if count > 0:
+            return True
+        logger.warning(f"标签 '{tab_keyword}' 不存在")
+        available = list(_TAG_KEYWORD_MAP.values())
+        logger.warning(f"可用标签: {available}")
+        return False
+    except Exception as e:
+        logger.warning(f"检查标签 '{tab_keyword}' 时出错: {e}")
+        return False
+
+
 def _setup_cookies(context):
     """设置 Cookie，统一处理异常"""
     raw_cookie = config.get_raw_cookie()
@@ -165,7 +250,7 @@ def _setup_cookies(context):
             continue
         try:
             context.add_cookies(
-                [{"name": k, "value": v, "domain": ".simuwang.com", "path": "/"}]
+                [{"name": k, "value": v, "domain": _COOKIE_DOMAIN, "path": "/"}]
             )
             success_count += 1
         except Exception as e:
@@ -210,21 +295,28 @@ def _init_tesseract():
     return pytesseract
 
 
-def _navigate_and_wait(page):
-    """跳转到目标页面并等待表格加载"""
+def _navigate_and_wait(page, tag: str = "private"):
+    """跳转到目标页面，切换标签，等待表格加载"""
     try:
-        page.goto(config.SIMU_URL, wait_until="load", timeout=config.GOTO_TIMEOUT)
+        page.goto(config.SIMU_URL, wait_until=_PAGE_LOAD_WAIT, timeout=config.GOTO_TIMEOUT)
         logger.info(f"页面加载完成: {page.title()}")
     except PlaywrightError as e:
         raise PageLoadError(f"页面加载失败: {e}", url=config.SIMU_URL, timeout=config.GOTO_TIMEOUT)
 
+    # 切换标签前先验证标签是否存在
+    if tag != "private":
+        if not _ensure_tag_exists(page, tag):
+            raise TagNotFoundError(tag=tag, available_tags=["private", "public", "money"])
+        if not _switch_to_tag(page, tag):
+            raise TagNotFoundError(tag=tag, available_tags=["private", "public", "money"])
+
     try:
-        page.wait_for_selector("tr.el-table__row", timeout=config.SELECTOR_TIMEOUT)
+        page.wait_for_selector(_TABLE_ROW_SELECTOR, timeout=config.SELECTOR_TIMEOUT)
         logger.info("表格加载完成")
     except PlaywrightError:
         raise ElementNotFoundError(
             "表格行未找到，可能页面结构变化或数据为空",
-            selector="tr.el-table__row",
+            selector=_TABLE_ROW_SELECTOR,
         )
 
     page.wait_for_timeout(config.PAGE_WAIT_TIME)
@@ -336,7 +428,7 @@ def _get_table_info(page) -> dict:
     )
 
 
-def _capture_table_screenshot(page, table_info: dict) -> str:
+def _capture_table_screenshot(page, table_info: dict, date_str: str = "", tag: str = "") -> str:
     """截取表格区域并保存，返回截图路径"""
     clip_x = max(0, table_info["x"] - config.CROP_MARGIN)
     clip_y = max(0, table_info["y"] - config.CROP_MARGIN)
@@ -345,14 +437,18 @@ def _capture_table_screenshot(page, table_info: dict) -> str:
 
     logger.info(f"截图区域: x={clip_x}, y={clip_y}, w={clip_w}, h={clip_h}")
 
+    if date_str:
+        tag_dir = os.path.join(config.SCREENSHOT_DIR, date_str, tag)
+    else:
+        tag_dir = config.SCREENSHOT_DIR
+    os.makedirs(tag_dir, exist_ok=True)
+
     try:
         screenshot_bytes = page.screenshot(
             type="png",
             clip={"x": clip_x, "y": clip_y, "width": clip_w, "height": clip_h},
         )
-        screenshot_path = os.path.join(
-            config.SCREENSHOT_DIR, "table_full_screenshot.png"
-        )
+        screenshot_path = os.path.join(tag_dir, "table_full_screenshot.png")
         with open(screenshot_path, "wb") as f:
             f.write(screenshot_bytes)
         logger.info(f"表格截图已保存: {screenshot_path} ({len(screenshot_bytes)} bytes)")
@@ -364,41 +460,40 @@ def _capture_table_screenshot(page, table_info: dict) -> str:
 def _extract_text_data(page) -> list:
     """从页面提取所有行的文本数据"""
     try:
-        rows_data = page.evaluate(
-            """
-() => {
-    const rows = Array.from(document.querySelectorAll('tbody tr.el-table__row'));
-    return rows.map(row => {
-        const cells = Array.from(row.querySelectorAll('td'));
-        return cells.map(cell => cell.innerText.trim());
-    }).filter(cells => cells.length >= 18);
-}
-"""
+        js_code = (
+            "() => {"
+            "const rows = Array.from(document.querySelectorAll('tbody " + _TABLE_ROW_SELECTOR + "'));"
+            "return rows.map(row => {"
+            "const cells = Array.from(row.querySelectorAll('td'));"
+            "return cells.map(cell => cell.innerText.trim());"
+            "}).filter(cells => cells.length >= " + str(_MIN_TABLE_COLUMNS) + ");"
+            "}"
         )
+        rows_data = page.evaluate(js_code)
     except PlaywrightError as e:
         raise BrowserError(f"提取文本数据失败: {e}", action="evaluate_js")
     return rows_data
 
 
-def _run_browser_session(use_ocr: bool) -> tuple:
+def _run_browser_session(use_ocr: bool, tag: str = "private", date_str: str = "") -> tuple:
     """
     执行单次浏览器会话：导航、截图、提取数据。
     返回 (fund_positions, table_info, table_screenshot_path, rows_data)
     """
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=_BROWSER_HEADLESS)
         context = browser.new_context(user_agent=config.USER_AGENT)
         _setup_cookies(context)
 
         page = context.new_page()
-        _navigate_and_wait(page)
+        _navigate_and_wait(page, tag)
 
         fund_positions = _extract_positions(page)
         table_info = _get_table_info(page)
 
         table_screenshot_path = ""
-        if table_info:
-            table_screenshot_path = _capture_table_screenshot(page, table_info)
+        if config.SAVE_SCREENSHOT and table_info:
+            table_screenshot_path = _capture_table_screenshot(page, table_info, date_str, tag)
 
         rows_data = _extract_text_data(page)
 
@@ -416,10 +511,13 @@ def _recognize_net_values(
     table_info: dict,
     table_screenshot_path: str,
     actual_fund_count: int,
+    date_str: str = "",
+    tag: str = "",
 ) -> tuple:
     """
     对表格截图进行 OCR 识别净值。
     actual_fund_count: 实际解析出的基金行数（用于统计分母）
+    date_str / tag: 用于截图子目录路径
     返回 (ocr_results dict, failed list)
     """
     if pytesseract is None or not table_screenshot_path or not os.path.exists(table_screenshot_path):
@@ -436,6 +534,13 @@ def _recognize_net_values(
     except Exception as e:
         logger.error(f"OCR 图片加载失败: {e}")
         return {}, []
+
+    # 截图子目录
+    if date_str and tag:
+        crop_dir = os.path.join(config.SCREENSHOT_DIR, date_str, tag)
+        os.makedirs(crop_dir, exist_ok=True)
+    else:
+        crop_dir = config.SCREENSHOT_DIR
 
     ocr_results = {}
     ocr_failed_list = []
@@ -465,11 +570,13 @@ def _recognize_net_values(
 
         net_value_img = img.crop(crop_box)
 
-        debug_crop_path = os.path.join(
-            config.SCREENSHOT_DIR,
-            f"CROP_{_safe_filename(fund_name)}_{i+1:02d}.png",
-        )
-        net_value_img.save(debug_crop_path)
+        # 保存裁剪图（仅在开启截图功能时保存）
+        if config.SAVE_SCREENSHOT:
+            debug_crop_path = os.path.join(
+                crop_dir,
+                f"{_safe_filename(fund_name)}.png",
+            )
+            net_value_img.save(debug_crop_path)
 
         net_value = ocr_recognize_net_value(pytesseract, net_value_img, fund_name)
 
@@ -508,28 +615,28 @@ def _parse_funds(rows_data: list, ocr_results: dict) -> tuple:
 
     for idx, row in enumerate(rows_data):
         try:
-            if len(row) < config.MIN_COLUMNS:
+            if len(row) < _MIN_TABLE_COLUMNS:
                 raise DataParseError(
-                    f"行 {idx + 1} 字段数不足: {len(row)} < {config.MIN_COLUMNS}",
+                    f"行 {idx + 1} 字段数不足: {len(row)} < {_MIN_TABLE_COLUMNS}",
                     field="row_length",
                 )
 
-            fund_name, fund_code, strategy = _parse_name_cell(row[1])
-            net_value_date = row[2].strip()
-            net_change, net_change_cmp = _parse_change_cell(row[3])
-            annual_return = row[4].strip()
-            this_year = row[5].strip()
-            last_week, last_week_range = _parse_week_cell(row[6])
-            one_month = row[7].strip()
-            three_month = row[8].strip()
-            six_month = row[9].strip()
-            one_year = row[10].strip()
-            two_year = row[11].strip()
-            three_year = row[12].strip()
-            five_year = row[13].strip()
-            since_inception = row[14].strip()
-            this_week, this_week_range = _parse_week_cell(row[15])
-            drawdown = row[17].strip()
+            fund_name, fund_code, strategy = _parse_name_cell(row[_COL_IDX_FUND_NAME])
+            net_value_date = row[_COL_IDX_NET_VALUE_DATE].strip()
+            net_change, net_change_cmp = _parse_change_cell(row[_COL_IDX_NET_CHANGE])
+            annual_return = row[_COL_IDX_ANNUAL_RETURN].strip()
+            this_year = row[_COL_IDX_THIS_YEAR].strip()
+            last_week, last_week_range = _parse_week_cell(row[_COL_IDX_LAST_WEEK])
+            one_month = row[_COL_IDX_ONE_MONTH].strip()
+            three_month = row[_COL_IDX_THREE_MONTH].strip()
+            six_month = row[_COL_IDX_SIX_MONTH].strip()
+            one_year = row[_COL_IDX_ONE_YEAR].strip()
+            two_year = row[_COL_IDX_TWO_YEAR].strip()
+            three_year = row[_COL_IDX_THREE_YEAR].strip()
+            five_year = row[_COL_IDX_FIVE_YEAR].strip()
+            since_inception = row[_COL_IDX_SINCE_INCEPTION].strip()
+            this_week, this_week_range = _parse_week_cell(row[_COL_IDX_THIS_WEEK])
+            drawdown = row[_COL_IDX_DRAWDOWN].strip()
 
             if not fund_name:
                 continue
@@ -570,10 +677,15 @@ def _parse_funds(rows_data: list, ocr_results: dict) -> tuple:
 
 
 # ===================== 保存阶段 =====================
-def _save_funds_csv(funds: list) -> str:
+def _save_funds_csv(funds: list, date_str: str = "", tag: str = "private") -> str:
     """将基金数据保存为 CSV，返回文件路径"""
-    date_str = datetime.now().strftime("%Y%m%d")
-    path = os.path.join(config.DATA_DIR, f"simu_option_{date_str}.csv")
+    if date_str:
+        tag_dir = os.path.join(config.DATA_DIR, date_str)
+    else:
+        date_str = datetime.now().strftime("%Y%m%d")
+        tag_dir = os.path.join(config.DATA_DIR, date_str)
+    os.makedirs(tag_dir, exist_ok=True)
+    path = os.path.join(tag_dir, f"{tag}.csv")
 
     try:
         df = pd.DataFrame([{k: str(v) if v is not None else "" for k, v in f.items()} for f in funds])
@@ -628,21 +740,17 @@ def _print_ocr_stats(df: pd.DataFrame):
 
 
 # ===================== 核心抓取 =====================
-def crawl(use_ocr: bool = True):
+def crawl(use_ocr: bool = True, tag: str = "private"):
     """
     抓取私募排排网数据，支持 OCR 净值识别。
 
-    流程分为以下阶段：
-      1. 初始化 Tesseract OCR
-      2. 浏览器会话（导航 + 截图 + 提取数据）
-      3. OCR 识别净值（可选）
-      4. 解析基金数据
-      5. 保存 CSV 并输出预览
-
     Args:
         use_ocr: 是否启用 OCR 识别净值（默认 True）
+        tag: 爬取哪个标签（默认 "private"）
     """
-    logger.info("开始抓取私募排排网 - 我的自选（Playwright）")
+    logger.info(f"开始抓取私募排排网 - 标签={tag}")
+
+    date_str = datetime.now().strftime("%Y%m%d")
 
     pytesseract = None
     crawl_error = None
@@ -659,19 +767,21 @@ def crawl(use_ocr: bool = True):
         try:
             logger.info(f"第 {attempt}/{config.MAX_RETRIES} 次尝试 - 启动浏览器...")
             fund_positions, table_info, table_screenshot_path, rows_data = \
-                _run_browser_session(use_ocr)
+                _run_browser_session(use_ocr, tag, date_str)
             break
+
+        except TagNotFoundError as e:
+            logger.warning(f"标签 '{tag}' 不存在: {e.message}，提示用户并跳过")
+            raise TagNotFoundError(
+                tag=tag,
+                available_tags=e.details.get("available_tags", ["private", "public", "money"]),
+            )
 
         except (PageLoadError, ElementNotFoundError, BrowserError, ScreenshotError) as e:
             crawl_error = e
-            logger.warning(f"第 {attempt}/{config.MAX_RETRIES} 次尝试失败: {e}")
-
             if attempt < config.MAX_RETRIES:
-                sleep_time = config.RETRY_DELAY * (config.RETRY_BACKOFF ** (attempt - 1))
-                logger.info(f"{sleep_time:.1f} 秒后进行第 {attempt + 1} 次尝试...")
-                time.sleep(sleep_time)
+                _log_and_sleep(attempt, e)
             else:
-                logger.error(f"重试次数用尽，最终失败: {e}")
                 error_detail = format_error_detail(e)
                 raise CrawlFailedError(f"抓取失败: {error_detail['message']}", e)
 
@@ -680,19 +790,13 @@ def crawl(use_ocr: bool = True):
 
         except Exception as e:
             crawl_error = e
-            logger.error(f"发生未预期的错误: {e}")
-
             if attempt < config.MAX_RETRIES:
-                sleep_time = config.RETRY_DELAY * (config.RETRY_BACKOFF ** (attempt - 1))
-                logger.info(f"{sleep_time:.1f} 秒后进行第 {attempt + 1} 次尝试...")
-                time.sleep(sleep_time)
+                _log_and_sleep(attempt, e)
             else:
-                logger.error(f"重试次数用尽，最终失败: {e}")
                 raise CrawlFailedError(f"抓取失败: {e}", e)
 
     # 解析
-    ocr_results = {}  # 空结果，OCR 完成后会更新
-    funds, parse_errors = _parse_funds(rows_data, ocr_results)
+    funds, parse_errors = _parse_funds(rows_data, {})
 
     if not funds:
         raise CrawlFailedError("未提取到任何有效基金数据", crawl_error or "unknown")
@@ -704,14 +808,15 @@ def crawl(use_ocr: bool = True):
     ocr_failed_list = []
     if use_ocr and pytesseract:
         ocr_results, ocr_failed_list = _recognize_net_values(
-            pytesseract, fund_positions, table_info, table_screenshot_path, actual_fund_count
+            pytesseract, fund_positions, table_info, table_screenshot_path,
+            actual_fund_count, date_str, tag,
         )
         # 用 OCR 结果更新已解析的基金净值
         for fund in funds:
             fund["最新净值"] = ocr_results.get(fund["基金名称"], fund["最新净值"])
 
     # 保存
-    csv_path = _save_funds_csv(funds)
+    csv_path = _save_funds_csv(funds, date_str, tag)
     df = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
 
     # 预览
@@ -741,16 +846,36 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="私募排排网抓取工具（支持 OCR 净值识别）"
     )
+    parser.add_argument("--all", action="store_true", help="爬取所有标签（默认）")
+    parser.add_argument("--tag", default="private", help="指定标签: private / public / money（默认 private）")
     parser.add_argument("--no-ocr", action="store_true", help="禁用 OCR，仅抓取文字数据")
     args = parser.parse_args()
 
-    try:
-        result = crawl(use_ocr=not args.no_ocr)
-        print(f"\n抓取完成: {result}")
-    except CrawlFailedError as e:
-        print(f"\n抓取失败: {e}")
-        exit(1)
-    except CookieError as e:
-        print(f"\nCookie 错误: {e.message}")
-        print("请更新 SIMU_COOKIES 环境变量")
-        exit(1)
+    from config import FUND_TYPES
+    all_tags = [t["key"] for t in FUND_TYPES]
+    tags_to_crawl = all_tags if args.all else [args.tag]
+    use_ocr = not args.no_ocr
+
+    results = []
+    for tag in tags_to_crawl:
+        print(f"\n{'='*50}")
+        print(f"开始爬取标签: {tag}")
+        print(f"{'='*50}")
+        try:
+            result = crawl(use_ocr=use_ocr, tag=tag)
+            result["tag"] = tag
+            results.append(result)
+            print(f"\n标签 {tag} 抓取完成: {result}")
+        except TagNotFoundError as e:
+            print(f"\n警告: 标签 '{tag}' 不存在，已跳过")
+            print(f"  可用标签: {e.details.get('available_tags', all_tags)}")
+            continue
+        except CrawlFailedError as e:
+            print(f"\n抓取失败 [{tag}]: {e}")
+            continue
+        except CookieError as e:
+            print(f"\nCookie 错误 [{tag}]: {e.message}")
+            print("请更新 SIMU_COOKIES 环境变量")
+            exit(1)
+
+

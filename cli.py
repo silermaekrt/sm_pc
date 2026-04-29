@@ -13,15 +13,15 @@ cli.py - 命令行工具
 """
 
 import argparse
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 def cmd_status(args):
     """查看爬虫状态"""
-    from app import CrawlRecord
+    from models import CrawlRecord
 
     with app.app_context():
         latest = CrawlRecord.query.order_by(CrawlRecord.start_time.desc()).first()
@@ -41,31 +41,33 @@ def cmd_status(args):
 
 def cmd_crawl(args):
     """手动触发爬取"""
-    from app import crawl_status
-    from app import _run_crawl_task
+    from app_state import crawl_status
+    from tasks.crawl_task import _run_crawl_task_inner, run_crawl_task
 
     if crawl_status["is_running"]:
         print("爬虫正在运行中...")
         return
 
-    print("开始爬取...")
-    _run_crawl_task(use_ocr=not args.no_ocr)
+    tag = args.tag or "private"
+    print(f"开始爬取，标签={tag}...")
+    run_crawl_task(use_ocr=not args.no_ocr, app=app, tag=tag)
     print("爬取完成")
 
 
 def cmd_import(args):
     """导入 CSV 到数据库"""
-    from app import _import_csv_to_db
+    from tasks.crawl_task import _import_csv_to_db
     from datetime import datetime
 
     date_str = args.date or datetime.now().strftime("%Y%m%d")
-    count = _import_csv_to_db(date_str)
+    tag = args.tag or "private"
+    count = _import_csv_to_db(date_str, tag=tag)
     print(f"导入完成，共 {count} 条记录")
 
 
 def cmd_list(args):
     """列出基金"""
-    from app import db, Fund
+    from models import db, Fund
 
     with app.app_context():
         query = Fund.query
@@ -86,7 +88,7 @@ def cmd_list(args):
 
 def cmd_clear(args):
     """清空数据库"""
-    from app import db, Fund, CrawlRecord
+    from models import db, Fund, CrawlRecord
 
     with app.app_context():
         if args.confirm:
@@ -108,10 +110,12 @@ def main():
     # crawl
     crawl_parser = subparsers.add_parser("crawl", help="手动触发爬取")
     crawl_parser.add_argument("--no-ocr", action="store_true", help="禁用 OCR")
+    crawl_parser.add_argument("--tag", type=str, default="private", help="基金标签 (default: private)")
 
     # import
     import_parser = subparsers.add_parser("import", help="导入 CSV 到数据库")
     import_parser.add_argument("--date", type=str, help="指定日期 (YYYYMMDD)")
+    import_parser.add_argument("--tag", type=str, default="private", help="基金标签 (default: private)")
 
     # list
     list_parser = subparsers.add_parser("list", help="列出基金")

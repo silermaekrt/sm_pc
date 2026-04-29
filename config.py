@@ -22,6 +22,40 @@ DATA_DIR = os.getenv("SIMU_SAVE_DIR", "data")
 SCREENSHOT_DIR = os.getenv("SIMU_SCREENSHOT_DIR", "screenshots")
 
 
+# ===================== 基金标签配置 =====================
+FUND_TYPES = [
+    {"key": "private", "name": "私募"},
+    {"key": "public",  "name": "公募"},
+    {"key": "money",   "name": "货币"},
+]
+ALL_TAG_KEYS = [t["key"] for t in FUND_TYPES]
+
+# 标签 -> Model 映射（运行时初始化，避免循环依赖）
+# 使用函数 get_tag_model_map() 获取，或在 app 启动后通过 init_tag_model_map() 填充 TAG_MODEL_MAP
+TAG_MODEL_MAP: dict = None
+
+
+def get_tag_model_map():
+    """获取标签到模型的映射（延迟导入以避免循环依赖）"""
+    global TAG_MODEL_MAP
+    if TAG_MODEL_MAP is None:
+        # 尚未初始化，动态导入以避免循环依赖
+        from models import Fund, FundPublic, FundMoney
+        TAG_MODEL_MAP = {
+            "private": Fund,
+            "public": FundPublic,
+            "money": FundMoney,
+        }
+    return TAG_MODEL_MAP
+
+
+def init_tag_model_map():
+    """在 Flask 应用启动时调用，初始化 TAG_MODEL_MAP"""
+    get_tag_model_map()
+
+# ===================== 安全配置 =====================
+ENCRYPTION_SECRET = os.getenv("SIMU_ENCRYPTION_SECRET", "simu_monitor_key")
+
 # ===================== Tesseract OCR 路径自动检测 =====================
 def _detect_tesseract_path() -> str:
     """
@@ -73,6 +107,8 @@ GOTO_TIMEOUT = 60000       # 页面跳转超时
 SELECTOR_TIMEOUT = 30000  # 选择器等待超时
 PAGE_WAIT_TIME = 2000      # 页面稳定等待时间
 VIEWPORT_WAIT_TIME = 1000  # 视口调整后等待时间
+TAB_SWITCH_WAIT_TIME = 1500  # 切换 Tab 后等待表格加载的时间
+
 
 # ===================== 数据验证配置 =====================
 MIN_COLUMNS = 18           # 表格最小列数
@@ -83,6 +119,9 @@ CROP_MARGIN = 10           # 表格截图边距
 CROP_X_OFFSET = 2          # 净值裁剪X方向边距
 CROP_Y_OFFSET = 5          # 净值裁剪Y方向上偏移（避开日期）
 CROP_HEIGHT_RATIO = 0.6    # 只截取单元格高度的60%（上半部分是净值数字）
+
+# ===================== 可选功能开关 =====================
+SAVE_SCREENSHOT = os.getenv("SAVE_SCREENSHOT", "true").lower() == "true"  # 是否保存截图
 
 # ===================== OCR 配置 =====================
 OCR_PSM_MODES = [6, 7]     # 尝试的PSM模式（6和7识别数字效果最好）

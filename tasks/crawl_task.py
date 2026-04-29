@@ -16,12 +16,14 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 import config
+from config import ALL_TAG_KEYS, get_tag_model_map
 from models import db, Fund, CrawlRecord
 from app_state import crawl_status
 from exceptions import (
     CookieError,
     PageLoadError,
     ElementNotFoundError,
+    TagNotFoundError,
     format_error_detail,
 )
 
@@ -30,32 +32,36 @@ logger = logging.getLogger(__name__)
 _scheduler: Optional[BackgroundScheduler] = None
 
 
-def run_crawl_task(use_ocr: bool = True, app=None):
+def run_crawl_task(use_ocr: bool = True, app=None, tag: str = "private"):
     """
     在后台线程中执行爬虫任务（由调度器调用）。
     app 参数必须由调用方传入，不依赖 current_app LocalProxy。
+    tag: 基金标签，默认 "private"
     """
+    if tag not in ALL_TAG_KEYS:
+        raise ValueError(f"不支持的标签 '{tag}'，可选: {ALL_TAG_KEYS}")
     if app is None:
         raise RuntimeError("app instance must be passed to run_crawl_task")
     with app.app_context():
-        _run_crawl_task_inner(use_ocr)
+        _run_crawl_task_inner(use_ocr=use_ocr, tag=tag)
 
 
-def _run_crawl_task_inner(use_ocr: bool = True):
+def _run_crawl_task_inner(use_ocr: bool = True, tag: str = "private"):
     """
     爬虫任务内部实现（在应用上下文中运行）
+    tag: 基金标签，对应 config.FUND_TYPES 中的 key
     """
     global crawl_status
 
     crawl_status["is_running"] = True
     crawl_status["last_error"] = None
 
-    date_str = datetime.now().strftime("%Y%m%d")
     crawl_date_str = datetime.now().strftime("%Y-%m-%d")
     crawl_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     crawl_date_obj = datetime.now().date()
 
     record = CrawlRecord(
+        tag=tag,
         crawl_date=crawl_date_obj,
         start_time=datetime.now(),
         status="running"
@@ -65,12 +71,20 @@ def _run_crawl_task_inner(use_ocr: bool = True):
     record_id = record.id
 
     try:
-        logger.info(f"[爬虫任务 {record_id}] 开始执行...")
+        logger.info(f"[爬虫任务 {record_id}] 开始执行，标签={tag}...")
 
         from run_ocr import crawl as run_crawl_func, CrawlFailedError
-        crawl_result = run_crawl_func(use_ocr=use_ocr)
+        crawl_result = run_crawl_func(use_ocr=use_ocr, tag=tag)
 
-        imported = _import_csv_to_db(date_str)
+        if crawl_result.get("skipped"):
+            logger.warning(f"[爬虫任务 {record_id}] 标签 '{crawl_result['tag']}' 未找到，跳过")
+            record.status = "skipped"
+            record.end_time = datetime.now()
+            record.error_message = f"标签 '{crawl_result['tag']}' 未找到，已跳过"
+            db.session.commit()
+            return
+
+        imported = _import_csv_to_db(crawl_date_str, tag)
 
         record.status = "success"
         record.end_time = datetime.now()
@@ -80,9 +94,17 @@ def _run_crawl_task_inner(use_ocr: bool = True):
 
         crawl_status["last_crawl"] = crawl_time_str
         logger.info(
-            f"[爬虫任务 {record_id}] 完成，导入 {imported} 条数据 "
+            f"[爬虫任务 {record_id}] 标签={tag} 完成，导入 {imported} 条数据 "
             f"(OCR 成功 {crawl_result.get('ocr_success', 0)} 条)"
         )
+
+    except TagNotFoundError as e:
+        logger.warning(f"[爬虫任务 {record_id}] 标签 '{tag}' 未找到: {e.message}")
+        crawl_status["last_error"] = f"标签 '{tag}' 未找到，请检查标签名称是否正确"
+        record.status = "skipped"
+        record.end_time = datetime.now()
+        record.error_message = e.message
+        db.session.commit()
 
     except CookieError as e:
         logger.error(f"[爬虫任务 {record_id}] Cookie 错误: {e.message}")
@@ -130,15 +152,18 @@ def _run_crawl_task_inner(use_ocr: bool = True):
         crawl_status["is_running"] = False
 
 
-def _import_csv_to_db(date_str: str) -> int:
+def _import_csv_to_db(date_str: str, tag: str = "private") -> int:
     """
     将爬虫生成的 CSV 文件导入数据库。
     date_str: 标准日期格式 "YYYY-MM-DD"
+    tag: 基金标签，对应不同的 Model
     返回导入的记录数。
     """
     from datetime import date as date_type
     filter_date = date_type.fromisoformat(date_str)
-    csv_path = os.path.join(config.DATA_DIR, f"simu_option_{date_str.replace('-', '')}.csv")
+
+    date_compact = date_str.replace("-", "")
+    csv_path = os.path.join(config.DATA_DIR, date_compact, f"{tag}.csv")
 
     if not os.path.exists(csv_path):
         logger.warning(f"CSV 文件不存在: {csv_path}")
@@ -146,11 +171,13 @@ def _import_csv_to_db(date_str: str) -> int:
 
     import pandas as pd
 
+    FundModel = get_tag_model_map().get(tag, Fund)
+
     try:
         df = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
-        logger.info(f"读取 CSV: {csv_path}, 共 {len(df)} 条记录")
+        logger.info(f"读取 CSV: {csv_path}, 共 {len(df)} 条记录，标签={tag}")
 
-        Fund.query.filter(Fund.crawl_date == filter_date).delete()
+        FundModel.query.filter(FundModel.crawl_date == filter_date).delete()
 
         funds = []
         for _, row in df.iterrows():
@@ -160,7 +187,7 @@ def _import_csv_to_db(date_str: str) -> int:
                     return ""
                 return str(val)
 
-            fund = Fund(
+            fund = FundModel(
                 fund_name=_v(row.get("基金名称", "")),
                 fund_code=_v(row.get("基金代码", "")),
                 strategy=_v(row.get("策略", "")),
@@ -190,7 +217,7 @@ def _import_csv_to_db(date_str: str) -> int:
         db.session.bulk_save_objects(funds)
         db.session.commit()
 
-        logger.info(f"成功导入 {len(funds)} 条基金数据")
+        logger.info(f"成功导入 {len(funds)} 条基金数据（标签={tag}）")
         return len(funds)
 
     except Exception as e:
@@ -225,7 +252,7 @@ def init_scheduler(app=None):
     _scheduler = BackgroundScheduler()
 
     _scheduler.add_job(
-        func=lambda app=app: run_crawl_task(use_ocr=True, app=app),
+        func=lambda: run_crawl_task(use_ocr=True, app=app),
         trigger=CronTrigger(hour=9, minute=0),
         id="daily_crawl",
         name="每日基金数据爬取",
@@ -233,7 +260,7 @@ def init_scheduler(app=None):
     )
 
     _scheduler.add_job(
-        func=lambda app=app: run_crawl_task(use_ocr=True, app=app),
+        func=lambda: run_crawl_task(use_ocr=True, app=app),
         trigger=CronTrigger(day_of_week="mon", hour=9, minute=30),
         id="weekly_crawl",
         name="每周基金数据爬取",
@@ -242,8 +269,8 @@ def init_scheduler(app=None):
 
     from apscheduler.triggers.interval import IntervalTrigger
     _scheduler.add_job(
-        func=lambda app=app: _cookie_refresh_wrapper(app=app),
-        trigger=IntervalTrigger(minutes=1),
+        func=lambda: _cookie_refresh_wrapper(app=app),
+        trigger=IntervalTrigger(minutes=60),
         id="cookie_refresh",
         name="Cookie 自动刷新",
         replace_existing=True,

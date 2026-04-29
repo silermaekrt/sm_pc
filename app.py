@@ -27,6 +27,9 @@ app.config["JSON_AS_ASCII"] = False
 
 db.init_app(app)
 
+# 初始化 TAG_MODEL_MAP（必须在路由注册前完成）
+config.init_tag_model_map()
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
 

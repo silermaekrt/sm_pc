@@ -11,11 +11,35 @@ import base64
 
 db = SQLAlchemy()
 
+# 共享字段列表（所有 Fund 模型共用）
+_FUND_FIELDS = [
+    "id", "fund_name", "fund_code", "strategy", "net_value_date",
+    "net_value", "net_change", "net_change_cmp", "annual_return",
+    "this_year", "last_week", "last_week_range", "one_month",
+    "three_month", "six_month", "one_year", "two_year", "three_year",
+    "five_year", "since_inception", "this_week", "this_week_range",
+    "drawdown", "crawl_time", "crawl_date",
+]
+
+
+def _fund_to_dict(self):
+    """所有 Fund 模型共用的 to_dict 逻辑"""
+    result = {}
+    for field in _FUND_FIELDS:
+        val = getattr(self, field, None)
+        if field == "crawl_time":
+            result[field] = val.strftime("%Y-%m-%d %H:%M:%S") if val else ""
+        elif field == "crawl_date":
+            result[field] = val.strftime("%Y-%m-%d") if val else ""
+        else:
+            result[field] = val or ""
+    return result
+
 
 class Fund(db.Model):
     """
-    基金数据模型
-    存储每次爬取后的基金数据
+    基金数据模型（私募 - 默认）
+    存储每次爬取后的私募基金数据
     """
     __tablename__ = "funds"
 
@@ -54,33 +78,93 @@ class Fund(db.Model):
 
     def to_dict(self):
         """转换为字典，用于 JSON 响应"""
-        return {
-            "id": self.id,
-            "fund_name": self.fund_name,
-            "fund_code": self.fund_code or "",
-            "strategy": self.strategy or "",
-            "net_value_date": self.net_value_date or "",
-            "net_value": self.net_value or "",
-            "net_change": self.net_change or "",
-            "net_change_cmp": self.net_change_cmp or "",
-            "annual_return": self.annual_return or "",
-            "this_year": self.this_year or "",
-            "last_week": self.last_week or "",
-            "last_week_range": self.last_week_range or "",
-            "one_month": self.one_month or "",
-            "three_month": self.three_month or "",
-            "six_month": self.six_month or "",
-            "one_year": self.one_year or "",
-            "two_year": self.two_year or "",
-            "three_year": self.three_year or "",
-            "five_year": self.five_year or "",
-            "since_inception": self.since_inception or "",
-            "this_week": self.this_week or "",
-            "this_week_range": self.this_week_range or "",
-            "drawdown": self.drawdown or "",
-            "crawl_time": self.crawl_time.strftime("%Y-%m-%d %H:%M:%S") if self.crawl_time else "",
-            "crawl_date": self.crawl_date.strftime("%Y-%m-%d") if self.crawl_date else "",
-        }
+        return _fund_to_dict(self)
+
+
+# 私募 Fund 的别名（用于统一 API 路由）
+FundPrivate = Fund
+
+
+class FundPublic(db.Model):
+    """公募基金数据模型，与私募结构完全一致"""
+    __tablename__ = "funds_public"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    fund_name = db.Column(db.String(100), nullable=False, comment="基金名称")
+    fund_code = db.Column(db.String(20), comment="基金代码")
+    strategy = db.Column(db.String(50), comment="策略")
+    net_value_date = db.Column(db.String(20), comment="净值日期")
+    net_value = db.Column(db.String(20), comment="最新净值（OCR识别）")
+    net_change = db.Column(db.String(20), comment="净值变动")
+    net_change_cmp = db.Column(db.String(20), comment="净值对比日期")
+    annual_return = db.Column(db.String(20), comment="成立来年化")
+    this_year = db.Column(db.String(20), comment="今年来")
+    last_week = db.Column(db.String(20), comment="上周")
+    last_week_range = db.Column(db.String(50), comment="上周区间")
+    one_month = db.Column(db.String(20), comment="近一月")
+    three_month = db.Column(db.String(20), comment="近三月")
+    six_month = db.Column(db.String(20), comment="近半年")
+    one_year = db.Column(db.String(20), comment="近一年")
+    two_year = db.Column(db.String(20), comment="近两年")
+    three_year = db.Column(db.String(20), comment="近三年")
+    five_year = db.Column(db.String(20), comment="近五年")
+    since_inception = db.Column(db.String(20), comment="成立来")
+    this_week = db.Column(db.String(20), comment="本周")
+    this_week_range = db.Column(db.String(50), comment="本周区间")
+    drawdown = db.Column(db.String(20), comment="回撤")
+    crawl_time = db.Column(db.DateTime, default=datetime.now, comment="爬取时间")
+    crawl_date = db.Column(db.Date, comment="爬取日期（用于去重）")
+
+    __table_args__ = (
+        db.Index("idx_public_fund_name", "fund_name"),
+        db.Index("idx_public_crawl_time", "crawl_time"),
+        db.Index("idx_public_crawl_date", "crawl_date"),
+        db.Index("idx_public_fund_name_crawl_date", "fund_name", "crawl_date"),
+    )
+
+    def to_dict(self):
+        return _fund_to_dict(self)
+
+
+class FundMoney(db.Model):
+    """货币基金数据模型，与私募结构完全一致"""
+    __tablename__ = "funds_money"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    fund_name = db.Column(db.String(100), nullable=False, comment="基金名称")
+    fund_code = db.Column(db.String(20), comment="基金代码")
+    strategy = db.Column(db.String(50), comment="策略")
+    net_value_date = db.Column(db.String(20), comment="净值日期")
+    net_value = db.Column(db.String(20), comment="最新净值（OCR识别）")
+    net_change = db.Column(db.String(20), comment="净值变动")
+    net_change_cmp = db.Column(db.String(20), comment="净值对比日期")
+    annual_return = db.Column(db.String(20), comment="成立来年化")
+    this_year = db.Column(db.String(20), comment="今年来")
+    last_week = db.Column(db.String(20), comment="上周")
+    last_week_range = db.Column(db.String(50), comment="上周区间")
+    one_month = db.Column(db.String(20), comment="近一月")
+    three_month = db.Column(db.String(20), comment="近三月")
+    six_month = db.Column(db.String(20), comment="近半年")
+    one_year = db.Column(db.String(20), comment="近一年")
+    two_year = db.Column(db.String(20), comment="近两年")
+    three_year = db.Column(db.String(20), comment="近三年")
+    five_year = db.Column(db.String(20), comment="近五年")
+    since_inception = db.Column(db.String(20), comment="成立来")
+    this_week = db.Column(db.String(20), comment="本周")
+    this_week_range = db.Column(db.String(50), comment="本周区间")
+    drawdown = db.Column(db.String(20), comment="回撤")
+    crawl_time = db.Column(db.DateTime, default=datetime.now, comment="爬取时间")
+    crawl_date = db.Column(db.Date, comment="爬取日期（用于去重）")
+
+    __table_args__ = (
+        db.Index("idx_money_fund_name", "fund_name"),
+        db.Index("idx_money_crawl_time", "crawl_time"),
+        db.Index("idx_money_crawl_date", "crawl_date"),
+        db.Index("idx_money_fund_name_crawl_date", "fund_name", "crawl_date"),
+    )
+
+    def to_dict(self):
+        return _fund_to_dict(self)
 
 
 class CrawlRecord(db.Model):
@@ -91,6 +175,7 @@ class CrawlRecord(db.Model):
     __tablename__ = "crawl_records"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    tag = db.Column(db.String(20), default="private", comment="基金标签: private/public/money")
     crawl_date = db.Column(db.Date, nullable=False, comment="爬取日期")
     start_time = db.Column(db.DateTime, default=datetime.now, comment="开始时间")
     end_time = db.Column(db.DateTime, comment="结束时间")
@@ -99,9 +184,15 @@ class CrawlRecord(db.Model):
     ocr_success = db.Column(db.Integer, default=0, comment="OCR成功数量")
     error_message = db.Column(db.Text, comment="错误信息")
 
+    __table_args__ = (
+        db.Index("idx_crawl_record_tag", "tag"),
+        db.Index("idx_crawl_record_status", "status"),
+    )
+
     def to_dict(self):
         return {
             "id": self.id,
+            "tag": self.tag,
             "crawl_date": self.crawl_date.strftime("%Y-%m-%d") if self.crawl_date else "",
             "start_time": self.start_time.strftime("%Y-%m-%d %H:%M:%S") if self.start_time else "",
             "end_time": self.end_time.strftime("%Y-%m-%d %H:%M:%S") if self.end_time else "",
@@ -146,8 +237,11 @@ class LoginCredential(db.Model):
 
 
 # ===================== 密码加密工具 =====================
-def encrypt_password_simple(password: str, secret: str = "simu_monitor_key") -> str:
+def encrypt_password_simple(password: str, secret: str = None) -> str:
     """简单加密：Base64 + XOR（用于本项目内部存储）"""
+    if secret is None:
+        from config import ENCRYPTION_SECRET
+        secret = ENCRYPTION_SECRET
     key_bytes = secret.encode("utf-8")
     password_bytes = password.encode("utf-8")
     encrypted = bytearray()
@@ -156,8 +250,11 @@ def encrypt_password_simple(password: str, secret: str = "simu_monitor_key") -> 
     return base64.b64encode(bytes(encrypted)).decode("utf-8")
 
 
-def decrypt_password_simple(encrypted: str, secret: str = "simu_monitor_key") -> str:
+def decrypt_password_simple(encrypted: str, secret: str = None) -> str:
     """简单解密"""
+    if secret is None:
+        from config import ENCRYPTION_SECRET
+        secret = ENCRYPTION_SECRET
     key_bytes = secret.encode("utf-8")
     encrypted_bytes = base64.b64decode(encrypted.encode("utf-8"))
     decrypted = bytearray()

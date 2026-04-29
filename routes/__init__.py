@@ -15,6 +15,7 @@ from routes.fund import fund_bp
 from routes.crawl import crawl_bp
 from routes.export import export_bp
 from routes.auth import auth_bp
+from routes.funds_api import funds_api_bp
 
 
 def register_routes(app):
@@ -23,4 +24,5 @@ def register_routes(app):
     app.register_blueprint(fund_bp, url_prefix="/api")
     app.register_blueprint(crawl_bp, url_prefix="/api")
     app.register_blueprint(export_bp, url_prefix="/api")
+    app.register_blueprint(funds_api_bp, url_prefix="/api")
     app.register_blueprint(auth_bp, url_prefix="/api/auth")

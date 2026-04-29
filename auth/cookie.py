@@ -119,6 +119,7 @@ def check_and_refresh_cookies():
         elapsed = (datetime.now() - cred.last_refresh).total_seconds() / 60
         if elapsed < cred.refresh_interval:
             return
+        logger.info(f"Cookie 刷新检查：距上次 {elapsed:.0f} 分钟（间隔 {cred.refresh_interval} 分钟）")
 
     logger.info("Cookie 刷新到期，开始自动刷新...")
 
