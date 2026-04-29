@@ -16,7 +16,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 import config
-from config import ALL_TAG_KEYS, get_tag_model_map
+from config import ALL_TAG_KEYS
 from models import db, Fund, CrawlRecord
 from app_state import crawl_status
 from exceptions import (
@@ -171,13 +171,11 @@ def _import_csv_to_db(date_str: str, tag: str = "private") -> int:
 
     import pandas as pd
 
-    FundModel = get_tag_model_map().get(tag, Fund)
-
     try:
         df = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
         logger.info(f"读取 CSV: {csv_path}, 共 {len(df)} 条记录，标签={tag}")
 
-        FundModel.query.filter(FundModel.crawl_date == filter_date).delete()
+        Fund.query.filter(Fund.tag == tag, Fund.crawl_date == filter_date).delete()
 
         funds = []
         for _, row in df.iterrows():
@@ -187,7 +185,8 @@ def _import_csv_to_db(date_str: str, tag: str = "private") -> int:
                     return ""
                 return str(val)
 
-            fund = FundModel(
+            fund = Fund(
+                tag=tag,
                 fund_name=_v(row.get("基金名称", "")),
                 fund_code=_v(row.get("基金代码", "")),
                 strategy=_v(row.get("策略", "")),

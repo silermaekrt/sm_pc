@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-routes/fund.py - 基金数据 API 路由（多标签版本）
+routes/fund.py - 基金数据 API 路由
 """
 
 import logging
@@ -9,7 +9,7 @@ from urllib.parse import unquote
 from datetime import datetime, date as date_type
 
 import config
-from config import ALL_TAG_KEYS, get_tag_model_map
+from config import ALL_TAG_KEYS
 from models import db, Fund, CrawlRecord
 
 logger = logging.getLogger(__name__)
@@ -21,9 +21,9 @@ def _error(message: str, status_code: int = 400):
     return jsonify({"status": "error", "message": message}), status_code
 
 
-def _get_model_for_tag(tag: str):
-    """根据 tag 返回对应的 Model，默认为 Fund（私募）"""
-    return get_tag_model_map().get(tag, Fund)
+def _base_query(tag: str):
+    """返回过滤了 tag 的 Fund 查询对象"""
+    return Fund.query.filter(Fund.tag == tag)
 
 
 @fund_bp.route("/funds", methods=["GET"])
@@ -52,21 +52,20 @@ def get_funds():
         return _error(f"不支持的标签 '{tag}'，可选: {ALL_TAG_KEYS}")
 
     per_page = min(per_page, 100)
-    FundModel = _get_model_for_tag(tag)
-    query = FundModel.query
+    query = _base_query(tag)
 
     if search:
-        query = query.filter(FundModel.fund_name.contains(search))
+        query = query.filter(Fund.fund_name.contains(search))
 
     if crawl_date:
         try:
             filter_date = date_type.fromisoformat(crawl_date)
-            query = query.filter(FundModel.crawl_date == filter_date)
+            query = query.filter(Fund.crawl_date == filter_date)
         except ValueError:
             pass
 
-    if hasattr(FundModel, sort):
-        sort_column = getattr(FundModel, sort)
+    if hasattr(Fund, sort):
+        sort_column = getattr(Fund, sort)
         if order == "asc":
             query = query.order_by(sort_column.asc())
         else:
@@ -97,17 +96,16 @@ def get_latest_funds():
     if tag not in ALL_TAG_KEYS:
         return _error(f"不支持的标签 '{tag}'，可选: {ALL_TAG_KEYS}")
 
-    FundModel = _get_model_for_tag(tag)
     subquery = db.session.query(
-        FundModel.fund_name,
-        db.func.max(FundModel.crawl_date).label("max_date")
-    ).group_by(FundModel.fund_name).subquery()
+        Fund.fund_name,
+        db.func.max(Fund.crawl_date).label("max_date")
+    ).filter(Fund.tag == tag).group_by(Fund.fund_name).subquery()
 
-    funds = FundModel.query.join(
+    funds = Fund.query.join(
         subquery,
         db.and_(
-            FundModel.fund_name == subquery.c.fund_name,
-            FundModel.crawl_date == subquery.c.max_date
+            Fund.fund_name == subquery.c.fund_name,
+            Fund.crawl_date == subquery.c.max_date
         )
     ).all()
 
@@ -132,10 +130,10 @@ def get_fund_detail(fund_name):
     if tag not in ALL_TAG_KEYS:
         return _error(f"不支持的标签 '{tag}'，可选: {ALL_TAG_KEYS}")
 
-    FundModel = _get_model_for_tag(tag)
-    records = FundModel.query.filter(
-        FundModel.fund_name == fund_name
-    ).order_by(FundModel.crawl_time.desc()).all()
+    records = Fund.query.filter(
+        Fund.tag == tag,
+        Fund.fund_name == fund_name,
+    ).order_by(Fund.crawl_time.desc()).all()
 
     if not records:
         return _error("基金不存在", 404)
@@ -159,10 +157,9 @@ def get_stats_summary():
     tag = request.args.get("tag", "", type=str).strip()
 
     def _tag_summary(t):
-        FundModel = _get_model_for_tag(t)
         total = db.session.query(
-            db.func.count(db.func.distinct(FundModel.fund_name))
-        ).scalar() or 0
+            db.func.count(db.func.distinct(Fund.fund_name))
+        ).filter(Fund.tag == t).scalar() or 0
         latest = CrawlRecord.query.filter(
             CrawlRecord.tag == t,
             CrawlRecord.status == "success",

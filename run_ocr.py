@@ -41,40 +41,6 @@ if not config.get_raw_cookie():
 # ===================== 模块级常量 =====================
 _TAG_KEYWORD_MAP = {"private": "私募", "public": "公募", "money": "货币"}
 
-# 列索引常量（用于 _parse_funds）
-_COL_IDX_FUND_NAME = 1
-_COL_IDX_NET_VALUE_DATE = 2
-_COL_IDX_NET_CHANGE = 3
-_COL_IDX_ANNUAL_RETURN = 4
-_COL_IDX_THIS_YEAR = 5
-_COL_IDX_LAST_WEEK = 6
-_COL_IDX_ONE_MONTH = 7
-_COL_IDX_THREE_MONTH = 8
-_COL_IDX_SIX_MONTH = 9
-_COL_IDX_ONE_YEAR = 10
-_COL_IDX_TWO_YEAR = 11
-_COL_IDX_THREE_YEAR = 12
-_COL_IDX_FIVE_YEAR = 13
-_COL_IDX_SINCE_INCEPTION = 14
-_COL_IDX_THIS_WEEK = 15
-_COL_IDX_DRAWDOWN = 17
-_MIN_TABLE_COLUMNS = 18  # 表格最小列数
-
-# OCR 配置
-_NET_VALUE_IMG_MIN_W = 30
-_NET_VALUE_IMG_MAX_W = 150
-_NET_VALUE_IMG_H = 8
-_NET_VALUE_IMG_FALLBACK_W = 35
-_NET_VALUE_IMG_FALLBACK_H = 20
-_NET_VALUE_DECIMAL_PLACES = 4
-
-# 浏览器配置
-_BROWSER_HEADLESS = True
-_COOKIE_DOMAIN = ".simuwang.com"
-_PAGE_LOAD_WAIT = "load"
-_TABLE_ROW_SELECTOR = "tr.el-table__row"
-_NET_VALUE_HEADER = "最新净值"
-
 
 # ===================== 异常类型 =====================
 PLAYWRIGHT_RETRY_EXCEPTIONS = (
@@ -250,7 +216,7 @@ def _setup_cookies(context):
             continue
         try:
             context.add_cookies(
-                [{"name": k, "value": v, "domain": _COOKIE_DOMAIN, "path": "/"}]
+                [{"name": k, "value": v, "domain": config.CRAWL.COOKIE_DOMAIN, "path": "/"}]
             )
             success_count += 1
         except Exception as e:
@@ -298,7 +264,7 @@ def _init_tesseract():
 def _navigate_and_wait(page, tag: str = "private"):
     """跳转到目标页面，切换标签，等待表格加载"""
     try:
-        page.goto(config.SIMU_URL, wait_until=_PAGE_LOAD_WAIT, timeout=config.GOTO_TIMEOUT)
+        page.goto(config.SIMU_URL, wait_until=config.CRAWL.PAGE_LOAD_WAIT, timeout=config.GOTO_TIMEOUT)
         logger.info(f"页面加载完成: {page.title()}")
     except PlaywrightError as e:
         raise PageLoadError(f"页面加载失败: {e}", url=config.SIMU_URL, timeout=config.GOTO_TIMEOUT)
@@ -311,12 +277,12 @@ def _navigate_and_wait(page, tag: str = "private"):
             raise TagNotFoundError(tag=tag, available_tags=["private", "public", "money"])
 
     try:
-        page.wait_for_selector(_TABLE_ROW_SELECTOR, timeout=config.SELECTOR_TIMEOUT)
+        page.wait_for_selector(config.CRAWL.TABLE_ROW_SELECTOR, timeout=config.SELECTOR_TIMEOUT)
         logger.info("表格加载完成")
     except PlaywrightError:
         raise ElementNotFoundError(
             "表格行未找到，可能页面结构变化或数据为空",
-            selector=_TABLE_ROW_SELECTOR,
+            selector=config.CRAWL.TABLE_ROW_SELECTOR,
         )
 
     page.wait_for_timeout(config.PAGE_WAIT_TIME)
@@ -462,11 +428,11 @@ def _extract_text_data(page) -> list:
     try:
         js_code = (
             "() => {"
-            "const rows = Array.from(document.querySelectorAll('tbody " + _TABLE_ROW_SELECTOR + "'));"
+            "const rows = Array.from(document.querySelectorAll('tbody " + config.CRAWL.TABLE_ROW_SELECTOR + "'));"
             "return rows.map(row => {"
             "const cells = Array.from(row.querySelectorAll('td'));"
             "return cells.map(cell => cell.innerText.trim());"
-            "}).filter(cells => cells.length >= " + str(_MIN_TABLE_COLUMNS) + ");"
+            "}).filter(cells => cells.length >= " + str(config.COL.MIN) + ");"
             "}"
         )
         rows_data = page.evaluate(js_code)
@@ -481,7 +447,7 @@ def _run_browser_session(use_ocr: bool, tag: str = "private", date_str: str = ""
     返回 (fund_positions, table_info, table_screenshot_path, rows_data)
     """
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=_BROWSER_HEADLESS)
+        browser = p.chromium.launch(headless=config.CRAWL.HEADLESS)
         context = browser.new_context(user_agent=config.USER_AGENT)
         _setup_cookies(context)
 
@@ -615,28 +581,28 @@ def _parse_funds(rows_data: list, ocr_results: dict) -> tuple:
 
     for idx, row in enumerate(rows_data):
         try:
-            if len(row) < _MIN_TABLE_COLUMNS:
+            if len(row) < config.COL.MIN:
                 raise DataParseError(
-                    f"行 {idx + 1} 字段数不足: {len(row)} < {_MIN_TABLE_COLUMNS}",
+                    f"行 {idx + 1} 字段数不足: {len(row)} < {config.COL.MIN}",
                     field="row_length",
                 )
 
-            fund_name, fund_code, strategy = _parse_name_cell(row[_COL_IDX_FUND_NAME])
-            net_value_date = row[_COL_IDX_NET_VALUE_DATE].strip()
-            net_change, net_change_cmp = _parse_change_cell(row[_COL_IDX_NET_CHANGE])
-            annual_return = row[_COL_IDX_ANNUAL_RETURN].strip()
-            this_year = row[_COL_IDX_THIS_YEAR].strip()
-            last_week, last_week_range = _parse_week_cell(row[_COL_IDX_LAST_WEEK])
-            one_month = row[_COL_IDX_ONE_MONTH].strip()
-            three_month = row[_COL_IDX_THREE_MONTH].strip()
-            six_month = row[_COL_IDX_SIX_MONTH].strip()
-            one_year = row[_COL_IDX_ONE_YEAR].strip()
-            two_year = row[_COL_IDX_TWO_YEAR].strip()
-            three_year = row[_COL_IDX_THREE_YEAR].strip()
-            five_year = row[_COL_IDX_FIVE_YEAR].strip()
-            since_inception = row[_COL_IDX_SINCE_INCEPTION].strip()
-            this_week, this_week_range = _parse_week_cell(row[_COL_IDX_THIS_WEEK])
-            drawdown = row[_COL_IDX_DRAWDOWN].strip()
+            fund_name, fund_code, strategy = _parse_name_cell(row[config.COL.FUND_NAME])
+            net_value_date = row[config.COL.NET_VALUE_DATE].strip()
+            net_change, net_change_cmp = _parse_change_cell(row[config.COL.NET_CHANGE])
+            annual_return = row[config.COL.ANNUAL_RETURN].strip()
+            this_year = row[config.COL.THIS_YEAR].strip()
+            last_week, last_week_range = _parse_week_cell(row[config.COL.LAST_WEEK])
+            one_month = row[config.COL.ONE_MONTH].strip()
+            three_month = row[config.COL.THREE_MONTH].strip()
+            six_month = row[config.COL.SIX_MONTH].strip()
+            one_year = row[config.COL.ONE_YEAR].strip()
+            two_year = row[config.COL.TWO_YEAR].strip()
+            three_year = row[config.COL.THREE_YEAR].strip()
+            five_year = row[config.COL.FIVE_YEAR].strip()
+            since_inception = row[config.COL.SINCE_INCEPTION].strip()
+            this_week, this_week_range = _parse_week_cell(row[config.COL.THIS_WEEK])
+            drawdown = row[config.COL.DRAWDOWN].strip()
 
             if not fund_name:
                 continue

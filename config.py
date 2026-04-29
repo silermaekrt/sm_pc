@@ -30,28 +30,56 @@ FUND_TYPES = [
 ]
 ALL_TAG_KEYS = [t["key"] for t in FUND_TYPES]
 
-# 标签 -> Model 映射（运行时初始化，避免循环依赖）
-# 使用函数 get_tag_model_map() 获取，或在 app 启动后通过 init_tag_model_map() 填充 TAG_MODEL_MAP
-TAG_MODEL_MAP: dict = None
-
 
 def get_tag_model_map():
-    """获取标签到模型的映射（延迟导入以避免循环依赖）"""
-    global TAG_MODEL_MAP
-    if TAG_MODEL_MAP is None:
-        # 尚未初始化，动态导入以避免循环依赖
-        from models import Fund, FundPublic, FundMoney
-        TAG_MODEL_MAP = {
-            "private": Fund,
-            "public": FundPublic,
-            "money": FundMoney,
-        }
-    return TAG_MODEL_MAP
+    """
+    获取标签到模型的映射（统一使用 Fund 模型）。
+    保留此函数以兼容现有代码。
+    """
+    from models import Fund
+    return {tag: Fund for tag in ALL_TAG_KEYS}
 
 
 def init_tag_model_map():
-    """在 Flask 应用启动时调用，初始化 TAG_MODEL_MAP"""
-    get_tag_model_map()
+    """在 Flask 应用启动时调用（本版本已简化为单模型，无需初始化）"""
+    pass
+
+# ===================== 表格列索引 =====================
+class COL:
+    """基金表格列索引常量（与 DOM 结构绑定，请勿随意修改顺序）"""
+    FUND_NAME = 1
+    NET_VALUE_DATE = 2
+    NET_CHANGE = 3
+    ANNUAL_RETURN = 4
+    THIS_YEAR = 5
+    LAST_WEEK = 6
+    ONE_MONTH = 7
+    THREE_MONTH = 8
+    SIX_MONTH = 9
+    ONE_YEAR = 10
+    TWO_YEAR = 11
+    THREE_YEAR = 12
+    FIVE_YEAR = 13
+    SINCE_INCEPTION = 14
+    THIS_WEEK = 15
+    DRAWDOWN = 17
+    MIN = 18  # 表格最小列数
+
+
+# ===================== 爬虫常量 =====================
+class CRAWL:
+    """爬虫相关常量"""
+    HEADLESS = True
+    COOKIE_DOMAIN = ".simuwang.com"
+    PAGE_LOAD_WAIT = "load"
+    TABLE_ROW_SELECTOR = "tr.el-table__row"
+    NET_VALUE_HEADER = "最新净值"
+    NET_VALUE_IMG_MIN_W = 30
+    NET_VALUE_IMG_MAX_W = 150
+    NET_VALUE_IMG_H = 8
+    NET_VALUE_IMG_FALLBACK_W = 35
+    NET_VALUE_IMG_FALLBACK_H = 20
+
 
 # ===================== 安全配置 =====================
 ENCRYPTION_SECRET = os.getenv("SIMU_ENCRYPTION_SECRET", "simu_monitor_key")

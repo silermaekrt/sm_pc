@@ -19,6 +19,8 @@ import config
 from app_state import crawl_status
 from routes import register_routes
 
+
+
 # ===================== Flask 应用配置 =====================
 app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///funds.db"

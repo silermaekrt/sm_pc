@@ -8,8 +8,8 @@ from datetime import datetime, date as date_type
 from flask import Blueprint, jsonify, request, Response
 
 import config
-from config import ALL_TAG_KEYS, get_tag_model_map
-from models import db, CrawlRecord
+from config import ALL_TAG_KEYS
+from models import db, Fund, CrawlRecord
 
 logger = logging.getLogger(__name__)
 export_bp = Blueprint("export", __name__)
@@ -71,8 +71,6 @@ def export_data():
     if tag not in ALL_TAG_KEYS:
         return _error(f"不支持的标签 '{tag}'，可选: {ALL_TAG_KEYS}")
 
-    FundModel = get_tag_model_map()[tag]
-
     if not crawl_date:
         latest_record = CrawlRecord.query.filter(
             CrawlRecord.tag == tag,
@@ -88,11 +86,11 @@ def export_data():
     except ValueError:
         return _error(f"无效的日期格式: {crawl_date}")
 
-    query = FundModel.query.filter(FundModel.crawl_date == crawl_date)
+    query = Fund.query.filter(Fund.tag == tag, Fund.crawl_date == crawl_date)
     if search:
-        query = query.filter(FundModel.fund_name.contains(search))
+        query = query.filter(Fund.fund_name.contains(search))
 
-    funds = query.order_by(FundModel.fund_name.asc()).all()
+    funds = query.order_by(Fund.fund_name.asc()).all()
 
     if not funds:
         return _error(f"标签 '{tag}' 日期 {crawl_date} 没有数据", 404)
