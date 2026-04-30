@@ -9,12 +9,13 @@ run_ocr.py - 带 OCR 净值识别的私募排排网抓取工具
 import os
 import re
 import time
-import logging
 import argparse
 import pandas as pd
 from datetime import datetime
 
 from playwright.sync_api import sync_playwright, Error as PlaywrightError
+from app_logging import get_logger
+
 import config
 from exceptions import (
     BrowserError,
@@ -29,9 +30,7 @@ from exceptions import (
 )
 from retry_utils import retry_on_exception
 
-# ===================== 日志配置 =====================
-logging.basicConfig(level=config.LOG_LEVEL, format=config.LOG_FORMAT)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 if not config.get_raw_cookie():
     logger.warning("SIMU_COOKIES 环境变量未设置，Cookie 将为空，可能导致抓取失败")
@@ -131,7 +130,6 @@ def _parse_name_cell(text: str) -> tuple:
     fund_name = lines[0] if lines else ""
     fund_code = ""
     strategy = ""
-    print( lines)
     for line in lines[1:]:
         if config.CODE_PATTERN.match(line):
             fund_code = line
@@ -564,7 +562,7 @@ def _run_browser_session(use_ocr: bool, tag: str = "private", date_str: str = ""
 
         table_screenshot_path = ""
         if config.SAVE_SCREENSHOT and table_info:
-            print("开始截图...")
+            logger.info("开始截图...")
             table_screenshot_path = _capture_table_screenshot(page, table_info, date_str, tag)
 
         context.close()
@@ -691,8 +689,6 @@ def _parse_funds(rows_data: list, ocr_results: dict) -> tuple:
                     f"行 {idx + 1} 字段数不足: {len(row)} < {config.COL.MIN}",
                     field="row_length",
                 )
-            print(row)
-            print("00000000000000000000000000000000000000000000000")
             fund_name, fund_code, strategy = _parse_name_cell(row[config.COL.FUND_NAME])
             net_value_date = row[config.COL.NET_VALUE_DATE].strip()
             net_change, net_change_cmp = _parse_change_cell(row[config.COL.NET_CHANGE])
@@ -807,7 +803,7 @@ def _print_ocr_stats(df: pd.DataFrame):
     fail = total - success
     msg = f"\n[OCR 统计] 总行数={total}，成功={success}，失败={fail}，成功率={success/total*100:.1f}%"
     logger.info(msg.strip())
-    print(msg)
+    logger.info(msg)
 
 
 # ===================== 核心抓取 =====================
@@ -891,7 +887,6 @@ def crawl(use_ocr: bool = True, tag: str = "private"):
         # 用 OCR 结果更新已解析的基金净值
         for fund in funds:
             fund["最新净值"] = ocr_results.get(fund["基金名称"], fund["最新净值"])
-    print(funds)
     # 保存
     csv_path = _save_funds_csv(funds, date_str, tag)
     df = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
@@ -934,23 +929,21 @@ if __name__ == "__main__":
 
     results = []
     for tag in tags_to_crawl:
-        print(f"\n{'='*50}")
-        print(f"开始爬取标签: {tag}")
-        print(f"{'='*50}")
+        logger.info(f"开始爬取标签: {tag}")
         try:
             result = crawl(tag=tag)
             result["tag"] = tag
             results.append(result)
-            print(f"\n标签 {tag} 抓取完成: {result}")
+            logger.info(f"\n标签 {tag} 抓取完成: {result}")
         except TagNotFoundError as e:
-            print(f"\n警告: 标签 '{tag}' 不存在，已跳过")
-            print(f"  可用标签: {e.details.get('available_tags', _TAG_KEY_LIST)}")
+            logger.exception(f"\n警告: 标签 '{tag}' 不存在，已跳过")
+            logger.exception(f"  可用标签: {e.details.get('available_tags', _TAG_KEY_LIST)}")
             continue
         except CrawlFailedError as e:
-            print(f"\n抓取失败 [{tag}]: {e}")
+            logger.exception(f"\n抓取失败 [{tag}]: {e}")
             continue
         except CookieError as e:
-            print(f"\nCookie 错误 [{tag}]: {e.message}")
-            print("请更新 SIMU_COOKIES 环境变量")
+            logger.exception(f"\nCookie 错误 [{tag}]: {e.message}")
+            logger.exception("请更新 SIMU_COOKIES 环境变量")
             exit(1)
 

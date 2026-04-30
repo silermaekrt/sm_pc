@@ -10,15 +10,16 @@ auth/cookie.py - Cookie 自动刷新管理
 
 import os
 import re
-import logging
 import requests
 from datetime import datetime
+
+from app_logging import get_logger
 
 import config
 from models import db, LoginCredential
 from models import encrypt_password_simple, decrypt_password_simple
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def refresh_cookies_from_login(username: str, password: str) -> tuple:

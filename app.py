@@ -11,14 +11,16 @@ app.py - Flask Web 应用入口
   app_state - 全局状态（避免循环导入）
 """
 
-import logging
 from flask import Flask
+from app_logging import get_logger
+
 from models import db
 
 import config
 from app_state import crawl_status
 from routes import register_routes
 
+logger = get_logger(__name__)
 
 
 # ===================== Flask 应用配置 =====================
@@ -31,9 +33,6 @@ db.init_app(app)
 
 # 初始化 TAG_MODEL_MAP（必须在路由注册前完成）
 config.init_tag_model_map()
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
-logger = logging.getLogger(__name__)
 
 
 # ===================== 注册路由 =====================

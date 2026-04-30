@@ -1,17 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-models.py - 数据库模型
-
-使用 SQLAlchemy ORM 进行数据库操作
+models.py - 数据库模型（SQLAlchemy ORM）
 """
 
-from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import base64
 
+from flask_sqlalchemy import SQLAlchemy
+
 db = SQLAlchemy()
 
-# 共享字段列表
 _FUND_FIELDS = [
     "id", "tag", "fund_name", "fund_code", "strategy", "net_value_date",
     "net_value", "net_change", "net_change_cmp", "annual_return",
@@ -22,24 +20,8 @@ _FUND_FIELDS = [
 ]
 
 
-def _fund_to_dict(self):
-    """所有 Fund 模型共用的 to_dict 逻辑"""
-    result = {}
-    for field in _FUND_FIELDS:
-        val = getattr(self, field, None)
-        if field == "crawl_time":
-            result[field] = val.strftime("%Y-%m-%d %H:%M:%S") if val else ""
-        elif field == "crawl_date":
-            result[field] = val.strftime("%Y-%m-%d") if val else ""
-        else:
-            result[field] = val or ""
-    return result
-
-
 class Fund(db.Model):
-    """
-    基金数据模型（统一存储私募/公募/货币基金，通过 tag 字段区分）
-    """
+    """基金数据（统一存储私募/公募/货币基金，通过 tag 字段区分）"""
     __tablename__ = "funds"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
@@ -48,7 +30,7 @@ class Fund(db.Model):
     fund_code = db.Column(db.String(20), comment="基金代码")
     strategy = db.Column(db.String(50), comment="策略")
     net_value_date = db.Column(db.String(20), comment="净值日期")
-    net_value = db.Column(db.String(20), comment="最新净值（OCR识别）")
+    net_value = db.Column(db.String(20), comment="最新净值")
     net_change = db.Column(db.String(20), comment="净值变动")
     net_change_cmp = db.Column(db.String(20), comment="净值对比日期")
     annual_return = db.Column(db.String(20), comment="成立来年化")
@@ -67,7 +49,7 @@ class Fund(db.Model):
     this_week_range = db.Column(db.String(50), comment="本周区间")
     drawdown = db.Column(db.String(20), comment="回撤")
     crawl_time = db.Column(db.DateTime, default=datetime.now, comment="爬取时间")
-    crawl_date = db.Column(db.Date, comment="爬取日期（用于去重）")
+    crawl_date = db.Column(db.Date, comment="爬取日期")
 
     __table_args__ = (
         db.Index("idx_fund_tag", "tag"),
@@ -78,23 +60,28 @@ class Fund(db.Model):
     )
 
     def to_dict(self):
-        """转换为字典，用于 JSON 响应"""
-        return _fund_to_dict(self)
+        result = {}
+        for field in _FUND_FIELDS:
+            val = getattr(self, field, None)
+            if field == "crawl_time":
+                result[field] = val.strftime("%Y-%m-%d %H:%M:%S") if val else ""
+            elif field == "crawl_date":
+                result[field] = val.strftime("%Y-%m-%d") if val else ""
+            else:
+                result[field] = val or ""
+        return result
 
 
 class CrawlRecord(db.Model):
-    """
-    爬取记录模型
-    记录每次爬取任务的执行情况
-    """
+    """爬取记录"""
     __tablename__ = "crawl_records"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    tag = db.Column(db.String(20), default="private", comment="基金标签: private/public/money")
+    tag = db.Column(db.String(20), default="private", comment="基金标签")
     crawl_date = db.Column(db.Date, nullable=False, comment="爬取日期")
     start_time = db.Column(db.DateTime, default=datetime.now, comment="开始时间")
     end_time = db.Column(db.DateTime, comment="结束时间")
-    status = db.Column(db.String(20), default="running", comment="状态: running/success/failed")
+    status = db.Column(db.String(20), default="running", comment="running/success/failed")
     total_funds = db.Column(db.Integer, default=0, comment="抓取基金数量")
     ocr_success = db.Column(db.Integer, default=0, comment="OCR成功数量")
     error_message = db.Column(db.Text, comment="错误信息")
@@ -119,10 +106,7 @@ class CrawlRecord(db.Model):
 
 
 class LoginCredential(db.Model):
-    """
-    登录凭证模型
-    存储用户名密码用于自动刷新 Cookie
-    """
+    """登录凭证（用于自动刷新 Cookie）"""
     __tablename__ = "login_credentials"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
@@ -135,9 +119,7 @@ class LoginCredential(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now, comment="更新时间")
     last_error = db.Column(db.Text, comment="上次错误信息")
 
-    __table_args__ = (
-        db.Index("idx_is_active", "is_active"),
-    )
+    __table_args__ = (db.Index("idx_is_active", "is_active"),)
 
     def to_dict(self):
         return {
@@ -151,28 +133,20 @@ class LoginCredential(db.Model):
         }
 
 
-# ===================== 密码加密工具 =====================
+# ===================== 密码加密（Base64 + XOR）=====================
 def encrypt_password_simple(password: str, secret: str = None) -> str:
-    """简单加密：Base64 + XOR（用于本项目内部存储）"""
     if secret is None:
         from config import ENCRYPTION_SECRET
         secret = ENCRYPTION_SECRET
-    key_bytes = secret.encode("utf-8")
-    password_bytes = password.encode("utf-8")
-    encrypted = bytearray()
-    for i, b in enumerate(password_bytes):
-        encrypted.append(b ^ key_bytes[i % len(key_bytes)])
-    return base64.b64encode(bytes(encrypted)).decode("utf-8")
+    key = secret.encode()
+    encrypted = bytes([b ^ key[i % len(key)] for i, b in enumerate(password.encode())])
+    return base64.b64encode(encrypted).decode()
 
 
 def decrypt_password_simple(encrypted: str, secret: str = None) -> str:
-    """简单解密"""
     if secret is None:
         from config import ENCRYPTION_SECRET
         secret = ENCRYPTION_SECRET
-    key_bytes = secret.encode("utf-8")
-    encrypted_bytes = base64.b64decode(encrypted.encode("utf-8"))
-    decrypted = bytearray()
-    for i, b in enumerate(encrypted_bytes):
-        decrypted.append(b ^ key_bytes[i % len(key_bytes)])
-    return bytes(decrypted).decode("utf-8")
+    key = secret.encode()
+    decrypted = bytes([b ^ key[i % len(key)] for i, b in enumerate(base64.b64decode(encrypted.encode()))])
+    return decrypted.decode()

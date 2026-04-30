@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-config.py - 私募排排网抓取工具配置
-
-配置优先级：环境变量 > .env文件 > 代码默认值
+config.py - 配置
 """
 
 import os
@@ -15,179 +13,133 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
-# ===================== 路径配置 =====================
+# ===================== 路径 =====================
 BASE_DIR = Path(__file__).parent.absolute()
 DATA_DIR = os.getenv("SIMU_SAVE_DIR", "data")
 SCREENSHOT_DIR = os.getenv("SIMU_SCREENSHOT_DIR", "screenshots")
 
 
-# ===================== 基金标签配置 =====================
+# ===================== 基金标签 =====================
 FUND_TYPES = [
     {"key": "private", "name": "私募"},
     {"key": "public",  "name": "公募"},
     {"key": "money",   "name": "货币"},
-    {"key": "exp",   "name": "指数"},
+    {"key": "exp",     "name": "指数"},
 ]
 ALL_TAG_KEYS = [t["key"] for t in FUND_TYPES]
 
 
 def get_fund_type_map():
-    """
-    从 FUND_TYPES 配置中生成 key 到 name 的映射字典
-
-    Returns:
-        dict: {key: name} 格式的字典，如 {"private": "私募", "public": "公募", "money": "货币"}
-    """
-    return {fund_type["key"]: fund_type["name"] for fund_type in FUND_TYPES}
+    """key → name 映射字典"""
+    return {t["key"]: t["name"] for t in FUND_TYPES}
 
 
 def get_fund_type_lists():
-    """
-    从 FUND_TYPES 配置中提取 key 和 name 列表
-
-    Returns:
-        tuple: (keys_list, names_list) - key列表和name列表的元组
-    """
-    keys = [fund_type["key"] for fund_type in FUND_TYPES]
-    names = [fund_type["name"] for fund_type in FUND_TYPES]
+    """(keys_list, names_list)"""
+    keys = [t["key"] for t in FUND_TYPES]
+    names = [t["name"] for t in FUND_TYPES]
     return keys, names
+
+
 def get_tag_model_map():
-    """
-    获取标签到模型的映射（统一使用 Fund 模型）。
-    保留此函数以兼容现有代码。
-    """
+    """标签 → Fund 模型映射"""
     from models import Fund
     return {tag: Fund for tag in ALL_TAG_KEYS}
 
 
 def init_tag_model_map():
-    """在 Flask 应用启动时调用（本版本已简化为单模型，无需初始化）"""
+    """Flask 启动时调用（本版本已简化为单模型，无需初始化）"""
     pass
 
-# ===================== 表格列索引 =====================
+
+# ===================== 表格列索引（与 DOM 绑定，勿随意修改顺序）=====================
 class COL:
-    """基金表格列索引常量（与 DOM 结构绑定，请勿随意修改顺序）"""
-    FUND_NAME = 1
-    NET_VALUE_DATE = 2
-    NET_CHANGE = 3
-    ANNUAL_RETURN = 4
-    THIS_YEAR = 5
-    LAST_WEEK = 6
-    ONE_MONTH = 7
-    THREE_MONTH = 8
-    SIX_MONTH = 9
-    ONE_YEAR = 10
-    TWO_YEAR = 11
-    THREE_YEAR = 12
-    FIVE_YEAR = 13
-    SINCE_INCEPTION = 14
-    THIS_WEEK = 15
-    DRAWDOWN = 17
-    MIN = 18  # 表格最小列数
+    FUND_NAME = 1; NET_VALUE_DATE = 2; NET_CHANGE = 3; ANNUAL_RETURN = 4
+    THIS_YEAR = 5; LAST_WEEK = 6; ONE_MONTH = 7; THREE_MONTH = 8
+    SIX_MONTH = 9; ONE_YEAR = 10; TWO_YEAR = 11; THREE_YEAR = 12
+    FIVE_YEAR = 13; SINCE_INCEPTION = 14; THIS_WEEK = 15; DRAWDOWN = 17
+    MIN = 18
 
 
 # ===================== 爬虫常量 =====================
 class CRAWL:
-    """爬虫相关常量"""
     HEADLESS = True
     COOKIE_DOMAIN = ".simuwang.com"
     PAGE_LOAD_WAIT = "load"
     TABLE_ROW_SELECTOR = "tr.el-table__row"
     NET_VALUE_HEADER = "最新净值"
-    NET_VALUE_IMG_MIN_W = 30
-    NET_VALUE_IMG_MAX_W = 150
-    NET_VALUE_IMG_H = 8
-    NET_VALUE_IMG_FALLBACK_W = 35
-    NET_VALUE_IMG_FALLBACK_H = 20
+    NET_VALUE_IMG_MIN_W = 30; NET_VALUE_IMG_MAX_W = 150
+    NET_VALUE_IMG_H = 8; NET_VALUE_IMG_FALLBACK_W = 35; NET_VALUE_IMG_FALLBACK_H = 20
 
 
-# ===================== 安全配置 =====================
+# ===================== 安全 =====================
 ENCRYPTION_SECRET = os.getenv("SIMU_ENCRYPTION_SECRET", "simu_monitor_key")
+
 
 # ===================== Tesseract OCR 路径自动检测 =====================
 def _detect_tesseract_path() -> str:
-    """
-    自动检测 Tesseract 可执行文件路径。
-
-    检测顺序：
-      1. TESSERACT_PATH 环境变量
-      2. Windows 默认安装路径
-      3. Linux/macOS PATH 中的 tesseract
-      4. 返回空字符串（找不到时由调用方处理）
-    """
     env_path = os.getenv("TESSERACT_PATH", "").strip()
     if env_path:
         return env_path
 
     if sys.platform == "win32":
         for base in [r"C:\Program Files", r"C:\Program Files (x86)", r"D:\tools", r"D:\software"]:
-            for ver in ["", "_ocr", r"Tesseract-OCR", r"Tesseract","tesseract"]:
+            for ver in ["", "_ocr", r"Tesseract-OCR", r"Tesseract", "tesseract"]:
                 candidate = os.path.join(base, ver, "tesseract.exe")
                 if os.path.isfile(candidate):
                     return os.path.dirname(candidate)
         return r"D:\tools\tesseract_ocr"
     else:
         found = shutil.which("tesseract")
-        if found:
-            return os.path.dirname(found)
-        return "/usr/bin"
+        return os.path.dirname(found) if found else "/usr/bin"
 
 
 TESSERACT_PATH = _detect_tesseract_path()
 
 
-# ===================== 网站配置 =====================
+# ===================== 网站 =====================
 SIMU_URL = os.getenv("SIMU_URL", "https://www.simuwang.com/user/option")
 RAW_COOKIE = os.getenv("SIMU_COOKIES", "")
 
 
 def get_raw_cookie() -> str:
-    """动态获取 Cookie（支持运行时刷新后自动更新）"""
     return os.getenv("SIMU_COOKIES", "")
 
-# ===================== 浏览器配置 =====================
+
+# ===================== 浏览器 =====================
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-VIEWPORT_WIDTH = 2200
-VIEWPORT_HEIGHT = 4000
-
-# ===================== 超时配置（毫秒）=====================
-GOTO_TIMEOUT = 60000       # 页面跳转超时
-SELECTOR_TIMEOUT = 30000  # 选择器等待超时
-PAGE_WAIT_TIME = 2000      # 页面稳定等待时间
-VIEWPORT_WAIT_TIME = 1000  # 视口调整后等待时间
-TAB_SWITCH_WAIT_TIME = 1500  # 切换 Tab 后等待表格加载的时间
+VIEWPORT_WIDTH = 2200; VIEWPORT_HEIGHT = 4000
 
 
-# ===================== 数据验证配置 =====================
-MIN_COLUMNS = 18           # 表格最小列数
-CODE_PATTERN = re.compile(r"[A-Z0-9]+")  # 基金代码正则
-
-# ===================== 截图裁剪配置 =====================
-CROP_MARGIN = 10           # 表格截图边距
-CROP_X_OFFSET = 2          # 净值裁剪X方向边距
-CROP_Y_OFFSET = 5          # 净值裁剪Y方向上偏移（避开日期）
-CROP_HEIGHT_RATIO = 0.6    # 只截取单元格高度的60%（上半部分是净值数字）
-
-# ===================== 可选功能开关 =====================
-SAVE_SCREENSHOT = os.getenv("SAVE_SCREENSHOT", "true").lower() == "true"  # 是否保存截图
-SAVE_DB          = os.getenv("SAVE_DB",          "true").lower() == "true"  # 是否导入数据库
-
-# ===================== OCR 配置 =====================
-OCR_PSM_MODES = [6, 7]     # 尝试的PSM模式（6和7识别数字效果最好）
-NET_VALUE_DECIMAL = 4      # 净值小数位数
-
-# ===================== 日志配置 =====================
-LOG_LEVEL = "INFO"
-LOG_FORMAT = "%(asctime)s - %(message)s"
-
-# ===================== 重试配置 =====================
-MAX_RETRIES = 3                    # 最大重试次数
-RETRY_DELAY = 2.0                  # 初始重试延迟（秒）
-RETRY_BACKOFF = 2.0                # 重试延迟倍数
-OCR_MAX_RETRIES = 2                # OCR 最大重试次数
+# ===================== 超时（毫秒）=====================
+GOTO_TIMEOUT = 60000; SELECTOR_TIMEOUT = 30000
+PAGE_WAIT_TIME = 2000; VIEWPORT_WAIT_TIME = 1000; TAB_SWITCH_WAIT_TIME = 1500
 
 
-# ===================== 确保目录存在 =====================
+# ===================== 数据验证 =====================
+MIN_COLUMNS = 18
+CODE_PATTERN = re.compile(r"[A-Z0-9]+")
+
+
+# ===================== 截图裁剪 =====================
+CROP_MARGIN = 10; CROP_X_OFFSET = 2; CROP_Y_OFFSET = 5; CROP_HEIGHT_RATIO = 0.6
+
+
+# ===================== 功能开关 =====================
+SAVE_SCREENSHOT = os.getenv("SAVE_SCREENSHOT", "true").lower() == "true"
+SAVE_DB = os.getenv("SAVE_DB", "true").lower() == "true"
+
+
+# ===================== OCR =====================
+OCR_PSM_MODES = [6, 7]
+NET_VALUE_DECIMAL = 4
+
+
+
+# ===================== 重试 =====================
+MAX_RETRIES = 3; RETRY_DELAY = 2.0; RETRY_BACKOFF = 2.0; OCR_MAX_RETRIES = 2
+
+
+# ===================== 初始化目录 =====================
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)

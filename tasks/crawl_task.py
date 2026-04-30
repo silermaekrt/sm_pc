@@ -8,12 +8,13 @@ tasks/crawl_task.py - 爬虫任务函数
 """
 
 import os
-import logging
 from datetime import datetime
 from typing import Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+
+from app_logging import get_logger
 
 import config
 from config import ALL_TAG_KEYS
@@ -27,7 +28,7 @@ from exceptions import (
     format_error_detail,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _scheduler: Optional[BackgroundScheduler] = None
 

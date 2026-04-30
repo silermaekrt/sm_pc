@@ -29,10 +29,7 @@ def main():
     # 初始化数据库
     with app.app_context():
         db.create_all()
-        print("=" * 50)
         print("数据库初始化完成")
-        print("=" * 50)
-
     # 启动定时任务（除非明确禁用）
     if not args.no_scheduler and not args.debug:
         try:
@@ -49,11 +46,8 @@ def main():
     print("=" * 50)
     print(f"私募基金监控平台已启动")
     print(f"访问地址: http://127.0.0.1:{args.port}")
-    print(f"API 文档: http://127.0.0.1:{args.port}/docs (仅调试模式)")
     print("=" * 50)
-    print()
     print("按 Ctrl+C 停止服务")
-    print()
 
     # 启动 Flask
     app.run(
