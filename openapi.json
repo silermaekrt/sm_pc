@@ -1,0 +1,541 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "私募基金监控平台 API",
+    "version": "1.0.0",
+    "description": "私募排排网基金数据抓取与监控平台，支持 OCR 净值识别、多标签筛选、数据导出。"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:5000",
+      "description": "本地开发环境"
+    }
+  ],
+  "tags": [
+    { "name": "爬虫", "description": "爬虫任务触发、状态与记录" },
+    { "name": "基金数据", "description": "基金列表查询、筛选、导出" },
+    { "name": "认证", "description": "Cookie 与登录凭证管理" }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "主页",
+        "description": "返回基金列表 Web 页面",
+        "responses": { "200": { "description": "HTML 页面" } }
+      }
+    },
+    "/stats": {
+      "get": {
+        "summary": "统计页面",
+        "description": "返回统计页面",
+        "responses": { "200": { "description": "HTML 页面" } }
+      }
+    },
+    "/api/crawl": {
+      "post": {
+        "tags": ["爬虫"],
+        "summary": "统一爬取接口",
+        "description": "支持同步/异步执行，单个/多个标签爬取。sync=true 时阻塞返回完整结果；sync=false 时异步立即返回。",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tags": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "default": ["private"],
+                    "example": ["private", "public"],
+                    "description": "标签列表，不传则爬取全部标签"
+                  },
+                  "sync": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "true=同步阻塞返回完整结果，false=异步立即返回"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "同步爬取结果或异步已启动",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CrawlResponse" }
+              }
+            }
+          },
+          "409": {
+            "description": "爬虫正在运行中",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "running" },
+                    "message": { "type": "string" },
+                    "last_crawl": { "type": "string", "nullable": true }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/crawl/tags": {
+      "get": {
+        "tags": ["爬虫"],
+        "summary": "获取可用标签列表",
+        "responses": {
+          "200": {
+            "description": "标签列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": { "type": "string", "example": "private" },
+                          "name": { "type": "string", "example": "私募" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/crawl/records": {
+      "get": {
+        "tags": ["爬虫"],
+        "summary": "获取爬取记录列表",
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "per_page", "in": "query", "schema": { "type": "integer", "default": 10 } },
+          { "name": "tag", "in": "query", "schema": { "type": "string" }, "description": "按标签筛选" }
+        ],
+        "responses": {
+          "200": {
+            "description": "爬取记录分页列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "items": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/CrawlRecord" }
+                    },
+                    "total": { "type": "integer" },
+                    "page": { "type": "integer" },
+                    "per_page": { "type": "integer" },
+                    "pages": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/crawl/status": {
+      "get": {
+        "tags": ["爬虫"],
+        "summary": "获取爬虫运行状态",
+        "responses": {
+          "200": {
+            "description": "状态信息",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "is_running": { "type": "boolean" },
+                    "last_crawl": { "type": "string", "nullable": true },
+                    "last_error": { "type": "string", "nullable": true }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/funds": {
+      "get": {
+        "tags": ["基金数据"],
+        "summary": "查询基金列表（分页 + 多维筛选）",
+        "description": "从数据库查询，支持标签、日期、基金名称、基金代码筛选",
+        "parameters": [
+          { "name": "tag", "in": "query", "schema": { "type": "string", "default": "private" }, "description": "基金标签" },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "per_page", "in": "query", "schema": { "type": "integer", "default": 20 } },
+          { "name": "name", "in": "query", "schema": { "type": "string" }, "description": "基金名称模糊搜索" },
+          { "name": "code", "in": "query", "schema": { "type": "string" }, "description": "基金代码精确匹配" },
+          { "name": "date", "in": "query", "schema": { "type": "string" }, "description": "爬取日期（YYYY-MM-DD）" },
+          { "name": "sort", "in": "query", "schema": { "type": "string", "default": "crawl_time" }, "description": "排序字段" },
+          { "name": "order", "in": "query", "schema": { "type": "string", "enum": ["asc", "desc"], "default": "desc" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "基金分页列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tag": { "type": "string" },
+                    "items": { "type": "array", "items": { "$ref": "#/components/schemas/Fund" } },
+                    "total": { "type": "integer" },
+                    "page": { "type": "integer" },
+                    "per_page": { "type": "integer" },
+                    "pages": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/funds/latest": {
+      "get": {
+        "tags": ["基金数据"],
+        "summary": "获取最新基金数据（每个基金取最新一条）",
+        "parameters": [
+          { "name": "tag", "in": "query", "schema": { "type": "string", "default": "private" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "最新基金列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tag": { "type": "string" },
+                    "items": { "type": "array", "items": { "$ref": "#/components/schemas/Fund" } },
+                    "total": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/fund/{fund_name}": {
+      "get": {
+        "tags": ["基金数据"],
+        "summary": "获取单个基金的详细历史数据",
+        "parameters": [
+          { "name": "fund_name", "in": "path", "required": true, "schema": { "type": "string" }, "description": "基金名称（URL 编码）" },
+          { "name": "tag", "in": "query", "schema": { "type": "string", "default": "private" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "基金历史记录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tag": { "type": "string" },
+                    "fund_name": { "type": "string" },
+                    "records": { "type": "array", "items": { "$ref": "#/components/schemas/Fund" } },
+                    "total": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "基金不存在" }
+        }
+      }
+    },
+    "/api/funds/stats": {
+      "get": {
+        "tags": ["基金数据"],
+        "summary": "获取统计摘要",
+        "parameters": [
+          { "name": "tag", "in": "query", "schema": { "type": "string" }, "description": "不传则返回所有标签汇总" }
+        ],
+        "responses": {
+          "200": {
+            "description": "统计摘要",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "summaries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "tag": { "type": "string" },
+                          "tag_name": { "type": "string" },
+                          "total_funds": { "type": "integer" },
+                          "latest_crawl": { "$ref": "#/components/schemas/CrawlRecord" }
+                        }
+                      }
+                    },
+                    "total_crawls": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/export": {
+      "get": {
+        "tags": ["基金数据"],
+        "summary": "导出基金数据",
+        "description": "从数据库导出，支持 CSV/JSON/XLSX，支持筛选条件",
+        "parameters": [
+          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["csv", "json", "xlsx"], "default": "csv" } },
+          { "name": "tag", "in": "query", "schema": { "type": "string", "default": "private" } },
+          { "name": "date", "in": "query", "schema": { "type": "string" }, "description": "爬取日期 YYYY-MM-DD，默认最新" },
+          { "name": "name", "in": "query", "schema": { "type": "string" }, "description": "基金名称模糊搜索" },
+          { "name": "code", "in": "query", "schema": { "type": "string" }, "description": "基金代码精确匹配" }
+        ],
+        "responses": {
+          "200": {
+            "description": "文件下载",
+            "content": {
+              "text/csv": { "schema": { "type": "string", "format": "binary" } },
+              "application/json": { "schema": { "type": "string", "format": "binary" } },
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "404": { "description": "无数据" }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "tags": ["基金数据"],
+        "summary": "健康检查",
+        "responses": {
+          "200": {
+            "description": "服务正常",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "ok" },
+                    "timestamp": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": ["认证"],
+        "summary": "保存登录凭证",
+        "description": "保存用户名密码，系统自动模拟登录刷新 Cookie",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username", "password"],
+                "properties": {
+                  "username": { "type": "string" },
+                  "password": { "type": "string" },
+                  "refresh_interval": { "type": "integer", "default": 60 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "凭证保存成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": { "type": "string" },
+                    "last_refresh": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "参数错误" }
+        }
+      }
+    },
+    "/api/auth/credentials": {
+      "get": {
+        "tags": ["认证"],
+        "summary": "获取登录凭证状态",
+        "responses": {
+          "200": {
+            "description": "凭证状态（不返回密码）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "has_credentials": { "type": "boolean" },
+                    "username": { "type": "string", "nullable": true },
+                    "last_refresh": { "type": "string", "nullable": true },
+                    "refresh_interval": { "type": "integer" },
+                    "is_active": { "type": "boolean" },
+                    "last_error": { "type": "string", "nullable": true },
+                    "created_at": { "type": "string", "nullable": true }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["认证"],
+        "summary": "删除登录凭证",
+        "responses": {
+          "200": {
+            "description": "已删除",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "message": { "type": "string" } } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/refresh": {
+      "post": {
+        "tags": ["认证"],
+        "summary": "手动刷新 Cookie",
+        "responses": {
+          "200": {
+            "description": "刷新成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": { "type": "string" },
+                    "cookies": { "type": "string", "description": "Cookie 前50字符（已截断）" }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "无保存的凭证" },
+          "500": { "description": "刷新失败" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Fund": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "tag": { "type": "string", "description": "标签：private/public/money" },
+          "fund_name": { "type": "string", "description": "基金名称" },
+          "fund_code": { "type": "string", "description": "基金代码" },
+          "strategy": { "type": "string", "description": "投资策略" },
+          "net_value_date": { "type": "string", "description": "净值日期" },
+          "net_value": { "type": "string", "description": "最新净值（OCR识别）" },
+          "net_change": { "type": "string", "description": "净值变动" },
+          "this_year": { "type": "string", "description": "今年来收益" },
+          "one_year": { "type": "string", "description": "近一年收益" },
+          "three_year": { "type": "string", "description": "近三年收益" },
+          "since_inception": { "type": "string", "description": "成立来收益" },
+          "drawdown": { "type": "string", "description": "历史最大回撤" },
+          "crawl_date": { "type": "string", "description": "爬取日期" },
+          "crawl_time": { "type": "string", "description": "爬取时间" }
+        }
+      },
+      "CrawlRecord": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "tag": { "type": "string" },
+          "crawl_date": { "type": "string" },
+          "start_time": { "type": "string" },
+          "end_time": { "type": "string", "nullable": true },
+          "status": { "type": "string", "enum": ["running", "success", "skipped", "failed"] },
+          "total_funds": { "type": "integer", "nullable": true },
+          "ocr_success": { "type": "integer", "nullable": true },
+          "error_message": { "type": "string", "nullable": true }
+        }
+      },
+      "CrawlResponse": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "started" },
+          "message": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "sync": { "type": "boolean" },
+          "last_crawl": { "type": "string", "nullable": true }
+        },
+        "example_async": {
+          "status": "started",
+          "message": "爬取已在后台启动",
+          "tags": ["private", "public"],
+          "sync": false
+        }
+      },
+      "CrawlSyncResult": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "success" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "results": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "status": { "type": "string" },
+                "tag": { "type": "string" },
+                "crawl_date": { "type": "string" },
+                "total": { "type": "integer" },
+                "funds": { "type": "array", "items": { "$ref": "#/components/schemas/Fund" } },
+                "ocr_stats": {
+                  "type": "object",
+                  "properties": {
+                    "ocr_success": { "type": "integer" },
+                    "ocr_failed": { "type": "integer" },
+                    "parse_errors": { "type": "integer" }
+                  }
+                },
+                "message": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -57,13 +57,15 @@ def export_data():
     Query Parameters:
         format: 导出格式 (csv/json/xlsx)，默认 csv
         tag: 基金标签（private/public/money），默认 private
-        crawl_date: 爬取日期筛选，默认导出最新日期
-        search: 搜索关键词
+        date: 爬取日期（YYYY-MM-DD），默认最新日期
+        name: 基金名称模糊搜索
+        code: 基金代码精确匹配
     """
     export_format = request.args.get("format", "csv").lower()
     tag = request.args.get("tag", "private", type=str)
-    crawl_date = request.args.get("crawl_date", "", type=str)
-    search = request.args.get("search", "", type=str)
+    crawl_date = request.args.get("date", "", type=str).strip()
+    search = request.args.get("name", "", type=str).strip()
+    fund_code = request.args.get("code", "", type=str).strip()
 
     if export_format not in ("csv", "json", "xlsx"):
         return _error("不支持的导出格式，仅支持 csv/json/xlsx")
@@ -89,6 +91,8 @@ def export_data():
     query = Fund.query.filter(Fund.tag == tag, Fund.crawl_date == crawl_date)
     if search:
         query = query.filter(Fund.fund_name.contains(search))
+    if fund_code:
+        query = query.filter(Fund.fund_code == fund_code)
 
     funds = query.order_by(Fund.fund_name.asc()).all()
 

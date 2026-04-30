@@ -25,6 +25,19 @@
         <div class="card">
             <div class="card-header">
                 <h2>爬取记录</h2>
+                <div class="card-header-right">
+                    <div class="tag-tabs" id="statsTagTabs"></div>
+                    <div class="export-dropdown" id="statsExportDropdown">
+                        <button class="btn btn-secondary btn-small" onclick="toggleStatsExportMenu()">
+                            导出 &#9660;
+                        </button>
+                        <div class="dropdown-menu" id="statsExportMenu" style="display:none;">
+                            <a href="#" onclick="exportStatsData('csv'); return false;">CSV</a>
+                            <a href="#" onclick="exportStatsData('json'); return false;">JSON</a>
+                            <a href="#" onclick="exportStatsData('xlsx'); return false;">Excel</a>
+                        </div>
+                    </div>
+                </div>
             </div>
             <table class="data-table">
                 <thead>
@@ -69,12 +82,54 @@
 
     <script>
         let returnChart, drawdownChart;
+        let statsTag = '';
+        let allStatsTags = [];
 
         document.addEventListener('DOMContentLoaded', function() {
-            loadCrawlRecords(1);
-            initCharts();
-            loadChartData();
+            loadStatsTags();
         });
+
+        function loadStatsTags() {
+            fetch('/api/crawl/tags')
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.tags || data.tags.length === 0) return;
+                    statsTag = data.tags[0].key;
+                    allStatsTags = data.tags;
+                    renderStatsTabs(data.tags);
+                    loadCrawlRecords(1);
+                    initCharts();
+                    loadChartData();
+                });
+        }
+
+        function renderStatsTabs(tags) {
+            allStatsTags = tags;
+            const container = document.getElementById('statsTagTabs');
+            container.innerHTML = tags.map(t =>
+                `<button class="tag-tab ${t.key === statsTag ? 'active' : ''}"
+                    data-tag="${t.key}"
+                    onclick="onStatsTagChange(this)">${t.name}</button>`
+            ).join('');
+        }
+
+        function onStatsTagChange(btn) {
+            statsTag = btn.dataset.tag;
+            renderStatsTabs(allStatsTags);
+            loadCrawlRecords(1);
+            loadChartData();
+        }
+
+        function toggleStatsExportMenu() {
+            const menu = document.getElementById('statsExportMenu');
+            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+        }
+
+        function exportStatsData(format) {
+            document.getElementById('statsExportMenu').style.display = 'none';
+            const params = new URLSearchParams({ format: format, tag: statsTag });
+            window.location.href = `/api/export?${params.toString()}`;
+        }
 
         function initCharts() {
             returnChart = echarts.init(document.getElementById('returnChart'));
@@ -82,7 +137,11 @@
         }
 
         function loadChartData() {
-            fetch('/api/funds/latest')
+            const params = new URLSearchParams();
+            if (statsTag) params.set('tag', statsTag);
+            const query = params.toString() ? '?' + params.toString() : '';
+
+            fetch('/api/funds/latest' + query)
                 .then(r => r.json())
                 .then(data => {
                     if (data.items && data.items.length > 0) {
@@ -93,7 +152,6 @@
         }
 
         function renderReturnChart(funds) {
-            // 解析今年来收益率
             const thisYearData = funds.map(f => {
                 const val = f.this_year;
                 if (!val) return null;
@@ -194,7 +252,7 @@
         }
 
         function loadCrawlRecords(page = 1) {
-            fetch(`/api/crawl/records?page=${page}&per_page=10`)
+            fetch(`/api/crawl/records?page=${page}&per_page=10&tag=${statsTag}`)
                 .then(r => r.json())
                 .then(data => {
                     renderCrawlRecords(data.items);

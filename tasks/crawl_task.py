@@ -84,7 +84,18 @@ def _run_crawl_task_inner(use_ocr: bool = True, tag: str = "private"):
             db.session.commit()
             return
 
-        imported = _import_csv_to_db(crawl_date_str, tag)
+        if config.SAVE_DB:
+            imported = _import_csv_to_db(crawl_date_str, tag)
+            logger.info(
+                f"[爬虫任务 {record_id}] 标签={tag} 完成，导入 {imported} 条数据 "
+                f"(OCR 成功 {crawl_result.get('ocr_success', 0)} 条)"
+            )
+        else:
+            imported = 0
+            logger.info(
+                f"[爬虫任务 {record_id}] 标签={tag} 完成（SAVE_DB=false，跳过数据库导入），"
+                f"CSV 已保存"
+            )
 
         record.status = "success"
         record.end_time = datetime.now()
@@ -93,10 +104,6 @@ def _run_crawl_task_inner(use_ocr: bool = True, tag: str = "private"):
         db.session.commit()
 
         crawl_status["last_crawl"] = crawl_time_str
-        logger.info(
-            f"[爬虫任务 {record_id}] 标签={tag} 完成，导入 {imported} 条数据 "
-            f"(OCR 成功 {crawl_result.get('ocr_success', 0)} 条)"
-        )
 
     except TagNotFoundError as e:
         logger.warning(f"[爬虫任务 {record_id}] 标签 '{tag}' 未找到: {e.message}")

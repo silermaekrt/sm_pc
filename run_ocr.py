@@ -4,7 +4,6 @@ run_ocr.py - 带 OCR 净值识别的私募排排网抓取工具
 
 使用方法：
     python run_ocr.py           # 抓取 + OCR 识别
-    python run_ocr.py --no-ocr  # 仅抓取文字数据（不 OCR）
 """
 
 import os
@@ -924,20 +923,22 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="私募排排网抓取工具（支持 OCR 净值识别）"
     )
-    parser.add_argument("--all", action="store_true", help="爬取所有标签（默认）")
-    parser.add_argument("--tag", default="private")
-    parser.add_argument("--no-ocr", action="store_true", help="禁用 OCR，仅抓取文字数据")
+    parser.add_argument(
+        "--tag",
+        default=None,
+        help="指定标签: private / public / money（不指定则爬取全部标签）"
+    )
     args = parser.parse_args()
 
-    use_ocr = not args.no_ocr
+    tags_to_crawl = [args.tag] if args.tag else _TAG_KEY_LIST
 
     results = []
-    for tag in _TAG_KEY_LIST:
+    for tag in tags_to_crawl:
         print(f"\n{'='*50}")
         print(f"开始爬取标签: {tag}")
         print(f"{'='*50}")
         try:
-            result = crawl(use_ocr=use_ocr, tag=tag)
+            result = crawl(tag=tag)
             result["tag"] = tag
             results.append(result)
             print(f"\n标签 {tag} 抓取完成: {result}")

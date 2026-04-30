@@ -101,8 +101,9 @@ python app.py
 ### 5. 单独运行爬虫（不启动 Web 服务）
 
 ```bash
-python run_ocr.py           # 抓取 + OCR 识别
-python run_ocr.py --no-ocr  # 仅抓取文字数据
+python run_ocr.py               # 爬取全部标签（默认）
+python run_ocr.py --tag public  # 只爬取公募标签
+python run_ocr.py --tag money   # 只爬取货币标签
 ```
 
 ## 数据说明
@@ -126,7 +127,7 @@ python run_ocr.py --no-ocr  # 仅抓取文字数据
 ### 存储位置
 
 - **SQLite 数据库**: `funds.db`（项目根目录）
-- **CSV 备份**: `data/simu_option_{YYYYMMDD}.csv`
+- **CSV 备份**: `data/YYYYMMDD/tag.csv`（如 `data/20260429/private.csv`）
 
 ## 定时任务
 
@@ -148,6 +149,8 @@ python run_ocr.py --no-ocr  # 仅抓取文字数据
 | `SIMU_URL` | 抓取页面 | simuwang.com/user/option | |
 | `GOTO_TIMEOUT` | 页面超时 | 60000ms | |
 | `SELECTOR_TIMEOUT` | 选择器超时 | 30000ms | |
+| `SAVE_SCREENSHOT` | 保存截图 | `true` | `false` 关闭截图，OCR 仍正常工作 |
+| `SAVE_DB` | 导入数据库 | `true` | `false` 关闭数据库导入，仅保存 CSV |
 
 ## 技术栈
 

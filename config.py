@@ -27,6 +27,7 @@ FUND_TYPES = [
     {"key": "private", "name": "私募"},
     {"key": "public",  "name": "公募"},
     {"key": "money",   "name": "货币"},
+    {"key": "exp",   "name": "指数"},
 ]
 ALL_TAG_KEYS = [t["key"] for t in FUND_TYPES]
 
@@ -170,6 +171,7 @@ CROP_HEIGHT_RATIO = 0.6    # 只截取单元格高度的60%（上半部分是净
 
 # ===================== 可选功能开关 =====================
 SAVE_SCREENSHOT = os.getenv("SAVE_SCREENSHOT", "true").lower() == "true"  # 是否保存截图
+SAVE_DB          = os.getenv("SAVE_DB",          "true").lower() == "true"  # 是否导入数据库
 
 # ===================== OCR 配置 =====================
 OCR_PSM_MODES = [6, 7]     # 尝试的PSM模式（6和7识别数字效果最好）

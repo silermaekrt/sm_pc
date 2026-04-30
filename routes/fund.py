@@ -35,16 +35,18 @@ def get_funds():
         tag: 基金标签（private/public/money），默认 private
         page: 页码（默认 1）
         per_page: 每页数量（默认 20）
-        search: 搜索关键词（基金名称）
-        crawl_date: 爬取日期筛选
+        name: 基金名称模糊搜索
+        code: 基金代码精确匹配
+        date: 爬取日期筛选（YYYY-MM-DD）
         sort: 排序字段（默认 crawl_time）
         order: 排序方向（asc/desc，默认 desc）
     """
     tag = request.args.get("tag", "private", type=str)
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
-    search = request.args.get("search", "", type=str)
-    crawl_date = request.args.get("crawl_date", "", type=str)
+    search = request.args.get("name", "", type=str)
+    fund_code = request.args.get("code", "", type=str)
+    crawl_date = request.args.get("date", "", type=str)
     sort = request.args.get("sort", "crawl_time", type=str)
     order = request.args.get("order", "desc", type=str)
 
@@ -56,6 +58,8 @@ def get_funds():
 
     if search:
         query = query.filter(Fund.fund_name.contains(search))
+    if fund_code:
+        query = query.filter(Fund.fund_code == fund_code)
 
     if crawl_date:
         try:
