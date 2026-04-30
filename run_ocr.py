@@ -132,6 +132,7 @@ def _parse_name_cell(text: str) -> tuple:
     fund_name = lines[0] if lines else ""
     fund_code = ""
     strategy = ""
+    print( lines)
     for line in lines[1:]:
         if config.CODE_PATTERN.match(line):
             fund_code = line
@@ -165,7 +166,6 @@ def _switch_to_tag(page, tag: str) -> bool:
     返回 True 表示成功，False 表示标签不存在或切换失败。
     """
     tab_keyword = _TAG_KEYWORD_MAP.get(tag, tag)
-    print(tab_keyword)
     try:
         page.evaluate('''(kw) => {
                    const tabs = document.querySelectorAll('.xs-nav-item');
@@ -323,9 +323,9 @@ def _navigate_and_wait(page, tag: str = "private") -> dict:
     fund_positions = _extract_positions(page)
     table_info = _get_table_info(page)
     rows_data = _extract_text_data(page)
-    print("fund_positions:", fund_positions)
+
     logger.info(f"数据提取完成: {len(rows_data)} 行")
-    print("table_info:", table_info)
+
 
     return {
         "has_data": True,
@@ -344,11 +344,14 @@ def _extract_positions(page) -> list:
 () => {
     const rows = Array.from(document.querySelectorAll('tbody tr.el-table__row'));
     const visibleRows = rows.filter(row => {
-        const style = row.getAttribute('style') || '';
-        return !style.includes('display: none');
-    });
+        let el = row;
+        for (let i=0; i<7; i++) el = el?.parentElement;
+            if (!el) return false;        // 第八个父亲不存在 → 不要
+            if (el.offsetParent === null) return false;  // 第八个父亲隐藏 → 不要
+            return true;                  // 否则留下
+           });
     const positions = [];
-
+    
     const headerCells = document.querySelectorAll('thead th');
     let netValueColIndex = -1;
     for (let i = 0; i < headerCells.length; i++) {
@@ -457,7 +460,6 @@ def _get_table_info(page) -> dict | None:
 }
 """
     )
-    print("info",info)
 
     if info is None or info.get("width", 0) <= 0 or info.get("height", 0) <= 0:
         return None
@@ -535,8 +537,6 @@ def _extract_text_data(page) -> list:
         )
 
         rows_data = page.evaluate(js_code)
-        print("rows_data",rows_data)
-        print("------------------------------------------------------")
     except PlaywrightError as e:
         raise BrowserError(f"提取文本数据失败: {e}", action="evaluate_js")
     return rows_data
@@ -564,11 +564,8 @@ def _run_browser_session(use_ocr: bool, tag: str = "private", date_str: str = ""
         rows_data = nav_result["rows_data"]
 
         table_screenshot_path = ""
-        print(config.SAVE_SCREENSHOT)
-        print(table_info)
         if config.SAVE_SCREENSHOT and table_info:
             print("开始截图...")
-            print(page, table_info,date_str, tag)
             table_screenshot_path = _capture_table_screenshot(page, table_info, date_str, tag)
 
         context.close()
@@ -660,6 +657,7 @@ def _recognize_net_values(
         else:
             ocr_failed_list.append(fund_name)
             logger.debug(f"[{fund_name}] OCR失败")
+        ocr_failed_list = []
 
     success_count = len(ocr_results)
     fail_count = len(ocr_failed_list)
@@ -694,7 +692,8 @@ def _parse_funds(rows_data: list, ocr_results: dict) -> tuple:
                     f"行 {idx + 1} 字段数不足: {len(row)} < {config.COL.MIN}",
                     field="row_length",
                 )
-
+            print(row)
+            print("00000000000000000000000000000000000000000000000")
             fund_name, fund_code, strategy = _parse_name_cell(row[config.COL.FUND_NAME])
             net_value_date = row[config.COL.NET_VALUE_DATE].strip()
             net_change, net_change_cmp = _parse_change_cell(row[config.COL.NET_CHANGE])
@@ -714,7 +713,6 @@ def _parse_funds(rows_data: list, ocr_results: dict) -> tuple:
 
             if not fund_name:
                 continue
-
             funds.append({
                 "基金名称": fund_name,
                 "基金代码": fund_code,
@@ -894,13 +892,13 @@ def crawl(use_ocr: bool = True, tag: str = "private"):
         # 用 OCR 结果更新已解析的基金净值
         for fund in funds:
             fund["最新净值"] = ocr_results.get(fund["基金名称"], fund["最新净值"])
-
+    print(funds)
     # 保存
     csv_path = _save_funds_csv(funds, date_str, tag)
     df = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
 
     # 预览
-    _print_preview(df)
+    # _print_preview(df)
     if use_ocr:
         _print_ocr_stats(df)
 
@@ -954,5 +952,4 @@ if __name__ == "__main__":
             print(f"\nCookie 错误 [{tag}]: {e.message}")
             print("请更新 SIMU_COOKIES 环境变量")
             exit(1)
-
 
