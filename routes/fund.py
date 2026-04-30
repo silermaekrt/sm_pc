@@ -77,21 +77,49 @@ def get_funds():
 
 @fund_bp.route("/funds/latest", methods=["GET"])
 def get_latest_funds():
-    """获取每个基金的最新一条记录"""
+    """获取每个基金的最新一条记录（支持搜索、排序、分页）"""
     tag = request.args.get("tag", "private", type=str)
+    page = request.args.get("page", 1, type=int)
+    per_page = min(request.args.get("per_page", 20, type=int), 100)
+    search = request.args.get("name", "", type=str)
+    sort = request.args.get("sort", "crawl_time", type=str)
+    order = request.args.get("order", "desc", type=str)
+
     if tag not in ALL_TAG_KEYS:
         return _error(f"不支持的标签 '{tag}'，可选: {ALL_TAG_KEYS}")
 
+    # 子查询：每个基金的最大日期
     subq = db.session.query(
         Fund.fund_name, db.func.max(Fund.crawl_date).label("max_date")
     ).filter(Fund.tag == tag).group_by(Fund.fund_name).subquery()
 
-    funds = Fund.query.join(subq, db.and_(
+    # 基础查询：取每个基金最新日期的记录
+    query = Fund.query.join(subq, db.and_(
         Fund.fund_name == subq.c.fund_name,
-        Fund.crawl_date == subq.c.max_date
-    )).all()
+        Fund.crawl_date == subq.c.max_date,
+        Fund.tag == tag
+    ))
 
-    return jsonify({"tag": tag, "items": [f.to_dict() for f in funds], "total": len(funds)})
+    # 搜索
+    if search:
+        query = query.filter(Fund.fund_name.contains(search))
+
+    # 排序
+    if hasattr(Fund, sort):
+        sort_col = getattr(Fund, sort)
+        query = query.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
+
+    # 分页
+    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+
+    return jsonify({
+        "tag": tag,
+        "items": [f.to_dict() for f in pagination.items],
+        "total": pagination.total,
+        "page": page,
+        "per_page": per_page,
+        "pages": pagination.pages,
+    })
 
 
 @fund_bp.route("/fund/<fund_name>", methods=["GET"])

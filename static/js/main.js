@@ -100,7 +100,7 @@ function loadLatestFunds(page = 1) {
     document.getElementById('latestTableBody').innerHTML =
         '<tr><td colspan="20" class="loading-cell"><div class="loading"></div></td></tr>';
 
-    fetch(`/api/funds?${params}`)
+    fetch(`/api/funds/latest?${params}`)
         .then(r => r.json())
         .then(data => {
             renderLatestTable(data.items);
