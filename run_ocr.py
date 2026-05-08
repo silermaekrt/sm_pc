@@ -8,6 +8,7 @@ run_ocr.py - 带 OCR 净值识别的私募排排网抓取工具
 
 import os
 import re
+import sys
 import time
 import argparse
 import pandas as pd
@@ -913,6 +914,476 @@ class CrawlFailedError(Exception):
         self.original_error = original_error
 
 
+# ===================== 累计净值爬取 =====================
+def _extract_cumulative_from_dom(page, fund_name: str) -> list:
+    """
+    从详情页 DOM 中提取累计净值表格数据。
+    列：净值日期, 累计净值(分红再投资)
+    返回 [{"净值日期": "...", "累计净值(分红再投资)": "..."}, ...]
+    """
+    try:
+        rows = page.evaluate(
+            """
+() => {
+    const tbody = document.querySelector('.el-table--scrollable-y .el-table__body-wrapper tbody');
+    if (!tbody) return [];
+    const dataRows = Array.from(tbody.querySelectorAll('tr.el-table__row'));
+    const results = [];
+    for (const row of dataRows) {
+        const cells = row.querySelectorAll('td');
+        if (cells.length < 5) continue;
+        // 列顺序: 净值日期(0), 单位净值(1), 累计净值(分红不投资)(2), (3)=空白, 累计净值(分红再投资)(4), 净值变动(5)
+        const dateText = (cells[0]?.innerText || '').trim();
+        const cumNavText = (cells[4]?.innerText || '').trim();
+        // 清理日期
+        const dateClean = dateText.replace(/[^\\d\\-\\.\\/]/g, '');
+        const dateMatch = dateClean.match(/\\d{4}[\\-\\.\\/]\\d{2}[\\-\\.\\/]\\d{2}/);
+        if (!dateMatch) continue;
+        const dateVal = dateMatch[0].replace(/\\//g, '-').replace(/\\./g, '-');
+        // 清理净值数字
+        const navRaw = cumNavText.replace(/[^\\d\\.\\-]/g, '');
+        const navMatch = navRaw.match(/-?\\d+\\.\\d+|-?\\d+/);
+        if (!navMatch) continue;
+        const navVal = navMatch[0];
+        results.push({'净值日期': dateVal, '累计净值(分红再投资)': navVal});
+    }
+    return results;
+}
+            """
+        )
+        logger.info(f"[{fund_name}] DOM 提取完成：{len(rows)} 行")
+        return rows
+    except Exception as e:
+        logger.warning(f"[{fund_name}] DOM 提取失败: {e}")
+        return []
+
+
+def _detect_table_columns(img, row_y_positions: list) -> dict:
+    """
+    从表格截图检测各列的 X 边界。
+    通过在已知行位置扫描竖线/间隙来定位列边界。
+    返回 {"date": (x0, x1), "nav": (x0, x1), "row_height": int}
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return {}
+
+    if not row_y_positions:
+        row_y_positions = list(range(60, img.height, 40))
+
+    gray = img.convert("L")
+    pixels = gray.load()
+    w, h = img.width, img.height
+
+    # 对每行扫描，找灰度突变（列分割线）
+    col_transitions = [{} for _ in range(w)]
+
+    for y in row_y_positions[:8]:  # 采样前几行
+        prev_dark = None
+        for x in range(w):
+            is_dark = pixels[x, y] < 100
+            if prev_dark is not None and is_dark != prev_dark:
+                col_transitions[x][y] = is_dark
+            prev_dark = is_dark
+
+    # 统计每列的分割位置（x处有多少次突变）
+    transition_count = [0] * w
+    for x in range(1, w - 1):
+        # 亮→暗 或 暗→亮 的次数
+        for y in row_y_positions[:8]:
+            if y in col_transitions[x]:
+                transition_count[x] += 1
+
+    # 找高峰（列分割线的位置）
+    threshold = max(3, len(row_y_positions[:8]) // 2)
+    col_boundaries = [0]
+    for x in range(10, w - 10):
+        if transition_count[x] >= threshold:
+            if not col_boundaries or x - col_boundaries[-1] > 20:
+                col_boundaries.append(x)
+    col_boundaries.append(w)
+
+    if len(col_boundaries) < 3:
+        # 回退：使用固定比例划分（适配 2200px 宽度）
+        col_boundaries = [0, 200, 420, 600, 800, 1100, 1300, w]
+
+    # 推断行高（两行文字之间的间距）
+    row_height = 40
+    if len(row_y_positions) >= 2:
+        diffs = sorted(set(row_y_positions[i+1] - row_y_positions[i]
+                          for i in range(len(row_y_positions)-1)))
+        if diffs:
+            row_height = diffs[len(diffs)//2]
+
+    # 列分配（假设: 0=日期, 1=单位净值, 2=累计净值1, 3=空白, 4=累计净值2, 5=净值变动）
+    # 找到前几列的分隔点
+    n_cols = len(col_boundaries) - 1
+
+    # 日期列：第1列
+    date_x0 = col_boundaries[0]
+    date_x1 = col_boundaries[1] if n_cols > 1 else 220
+
+    # 累计净值（分红再投资）：找第5列（index 4），如果没有则用倒数第2列
+    nav_col_idx = min(4, n_cols - 2) if n_cols > 1 else 1
+    if n_cols <= 4:
+        # 尝试用比例估算
+        nav_col_idx = 4
+
+    nav_x0 = col_boundaries[min(nav_col_idx, n_cols - 1)] if n_cols > 1 else int(w * 0.58)
+    nav_x1 = col_boundaries[min(nav_col_idx + 1, n_cols)] if n_cols > 1 else int(w * 0.72)
+
+    return {
+        "date": (date_x0, date_x1),
+        "nav": (nav_x0, nav_x1),
+        "row_height": row_height,
+        "col_boundaries": col_boundaries,
+    }
+
+
+def _ocr_cumulative_from_image(img, col_info: dict, row_y_positions: list, fund_name: str) -> list:
+    """
+    用 OCR 从表格截图中提取累计净值数据。
+
+    Args:
+        img: PIL Image
+        col_info: _detect_table_columns 返回的列信息
+        row_y_positions: 各行的 Y 坐标列表
+        fund_name: 基金名称（用于日志）
+
+    Returns:
+        list of {"净值日期": "...", "累计净值(分红再投资)": "..."}
+    """
+    try:
+        import pytesseract
+    except ImportError:
+        return []
+
+    tesseract_exe = os.path.join(config.TESSERACT_PATH,
+                                 "tesseract.exe" if sys.platform == "win32" else "tesseract")
+    if os.path.exists(tesseract_exe):
+        pytesseract.pytesseract.tesseract_cmd = tesseract_exe
+
+    results = []
+    date_box = col_info.get("date", (0, 200))
+    nav_box = col_info.get("nav", (int(img.width * 0.58), int(img.width * 0.72)))
+    row_height = col_info.get("row_height", 40)
+
+    for i, y in enumerate(row_y_positions):
+        # 日期裁剪区
+        date_crop = img.crop((
+            max(0, date_box[0] - 5),
+            max(0, y - 10),
+            min(img.width, date_box[1] + 5),
+            min(img.height, y + row_height - 5),
+        ))
+        # 净值裁剪区（需反转：文字是浅色，背景是白色）
+        nav_crop = img.crop((
+            max(0, nav_box[0] - 5),
+            max(0, y - 10),
+            min(img.width, nav_box[1] + 5),
+            min(img.height, y + row_height - 5),
+        ))
+
+        # 日期 OCR（正常黑底白字）
+        try:
+            date_text = pytesseract.image_to_string(
+                date_crop, lang="eng", config="--psm 7"
+            ).strip()
+        except Exception:
+            date_text = ""
+
+        # 净值 OCR（反转：白底浅灰字 → 黑底黑字）
+        try:
+            nav_img = nav_crop.convert("L")
+            import numpy as np
+            nav_arr = np.array(nav_img)
+            # 反转
+            nav_arr_inv = 255 - nav_arr
+            from PIL import Image as PILImage
+            nav_inv_img = PILImage.fromarray(nav_arr_inv)
+            nav_text = pytesseract.image_to_string(
+                nav_inv_img, lang="eng", config="--psm 7"
+            ).strip()
+        except Exception:
+            nav_text = ""
+
+        # 解析日期
+        date_clean = date_text.replace(" ", "").replace("\n", "")
+        date_match = re.search(r"\d{4}[-/.\s]\d{2}[-/.\s]\d{2}", date_clean)
+        if not date_match:
+            continue
+        date_val = date_match.group().replace("/", "-").replace(".", "-").replace(" ", "")
+
+        # 解析净值
+        nav_clean = nav_text.replace(" ", "").replace("\n", "").replace("o", "0").replace("O", "0")
+        nav_clean = re.sub(r"[^\d.\-]", "", nav_clean)
+        nav_match = re.search(r"-?\d+\.\d+|-?\d+", nav_clean)
+        if not nav_match:
+            continue
+        nav_val = nav_match.group()
+        if "." in nav_val:
+            try:
+                integer, decimal = nav_val.split(".")
+                decimal = (decimal + "0000")[:4]
+                nav_val = f"{integer}.{decimal}"
+            except Exception:
+                pass
+
+        results.append({"净值日期": date_val, "累计净值(分红再投资)": nav_val})
+        logger.debug(f"[{fund_name}] OCR行 {i+1}: 日期={date_val}, 累计净值={nav_val}")
+
+    return results
+
+
+def _save_cumulative_screenshot(new_page, tag: str, fund_name: str) -> tuple:
+    """
+    从详情页历史净值/分红表格提取数据，优先 DOM，回退 OCR。
+    返回 (截图路径, 数据列表)。
+    """
+    fund_dir = os.path.join(config.CUMULATIVE_BASE_DIR, tag, _safe_filename(fund_name))
+    os.makedirs(fund_dir, exist_ok=True)
+    screenshot_path = os.path.join(fund_dir, f"{_safe_filename(fund_name)}.png")
+
+    # 等待表格行加载
+    try:
+        new_page.wait_for_selector(
+            ".el-table--scrollable-y .el-table__body-wrapper tbody tr.el-table__row",
+            timeout=10000,
+        )
+    except Exception:
+        logger.warning(f"累计净值表格行未找到 [{fund_name}]")
+
+    # DOM 提取（优先）
+    dom_data = _extract_cumulative_from_dom(new_page, fund_name)
+
+    # 截图存档（总是执行，供 OCR 使用）
+    table_locator = new_page.locator(".el-table--scrollable-y")
+    screenshot_done = False
+    try:
+        if table_locator.count() > 0:
+            table_locator.first.screenshot(path=screenshot_path)
+            screenshot_done = True
+            logger.info(f"累计净值表格截图已保存: {screenshot_path}")
+    except Exception as e:
+        logger.warning(f"表格截图失败 [{fund_name}]: {e}")
+
+    # DOM 有数据直接返回
+    if dom_data:
+        _save_cumulative_csv(dom_data, tag, fund_name)
+        return screenshot_path, dom_data
+
+    # DOM 为空，使用 OCR
+    if not screenshot_done:
+        logger.warning(f"[{fund_name}] 无法截图，跳过 OCR")
+        return screenshot_path, []
+
+    logger.info(f"[{fund_name}] DOM 无数据，尝试 OCR...")
+
+    try:
+        from PIL import Image
+        import numpy as np
+
+        img = Image.open(screenshot_path)
+        w, h = img.width, img.height
+        logger.debug(f"[{fund_name}] 截图尺寸: {w}x{h}")
+
+        # 检测各行 Y 坐标（基于灰度图找暗色块，即文字行）
+        gray = img.convert("L")
+        pixels = gray.load()
+        row_y_positions = []
+        in_text = False
+        for y in range(0, h - 10, 2):
+            # 检查这一行是否有暗像素（文字）
+            dark_pixels = sum(1 for x in range(0, w, 5) if pixels[x, y] < 120)
+            is_text = dark_pixels > w // 20
+            if is_text and not in_text:
+                if not row_y_positions or (y - row_y_positions[-1]) > 15:
+                    row_y_positions.append(y)
+                in_text = True
+            elif not is_text:
+                in_text = False
+
+        logger.debug(f"[{fund_name}] 检测到 {len(row_y_positions)} 行数据，位置: {row_y_positions[:10]}")
+
+        if len(row_y_positions) < 2:
+            logger.warning(f"[{fund_name}] 无法检测表格行")
+            return screenshot_path, []
+
+        # 检测列边界
+        col_info = _detect_table_columns(img, row_y_positions)
+        logger.debug(f"[{fund_name}] 列信息: {col_info}")
+
+        # OCR 提取
+        ocr_data = _ocr_cumulative_from_image(img, col_info, row_y_positions, fund_name)
+        logger.info(f"[{fund_name}] OCR 提取完成：{len(ocr_data)} 行")
+
+        if ocr_data:
+            _save_cumulative_csv(ocr_data, tag, fund_name)
+            return screenshot_path, ocr_data
+
+        return screenshot_path, []
+
+    except ImportError as e:
+        logger.warning(f"[{fund_name}] 缺少依赖库: {e}")
+        return screenshot_path, []
+    except Exception as e:
+        logger.warning(f"[{fund_name}] OCR 处理失败: {e}")
+        return screenshot_path, []
+
+
+def _save_cumulative_csv(data: list, tag: str, fund_name: str) -> str:
+    """
+    将累计净值数据保存为 CSV。
+    列：净值日期, 累计净值(分红再投资)
+    保存路径: cumulative/{tag}/{fund_name}/{fund_name}.csv
+    """
+    if not data:
+        return ""
+
+    fund_dir = os.path.join(config.CUMULATIVE_BASE_DIR, tag, _safe_filename(fund_name))
+    os.makedirs(fund_dir, exist_ok=True)
+    csv_path = os.path.join(fund_dir, f"{_safe_filename(fund_name)}.csv")
+
+    try:
+        df = pd.DataFrame(data)
+        df.columns = ["净值日期", "累计净值(分红再投资)"]
+        df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+        logger.info(f"累计净值 CSV 已保存: {csv_path} ({len(data)} 条)")
+        return csv_path
+    except Exception as e:
+        logger.warning(f"CSV 保存失败 [{fund_name}]: {e}")
+        return ""
+
+
+def crawl_cumulative_nav(tag: str = "private"):
+    """
+    对标签下每个基金进入详情页的历史净值/分红，
+    截图并提取净值日期和累计净值存入 CSV。
+
+    保存路径: cumulative/{tag}/{fund_name}/{fund_name}.png
+              cumulative/{tag}/{fund_name}/{fund_name}.csv
+
+    Args:
+        tag: 基金标签（默认 "private"）
+    Returns:
+        dict: {"success": int, "failed": int, "skipped": int}
+    """
+    if tag not in config.ALL_TAG_KEYS:
+        raise ValueError(f"不支持的标签 '{tag}'，可选: {config.ALL_TAG_KEYS}")
+
+    logger.info(f"[累计净值] 开始爬取，标签={tag}")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=config.CRAWL.HEADLESS, args=["--start-maximized"])
+        context = browser.new_context(user_agent=config.USER_AGENT, viewport=None)
+        _setup_cookies(context)
+
+        page = context.new_page()
+
+        # 2. 导航并提取基金名称
+        try:
+            nav_result = _navigate_and_wait(page, tag)
+            if not nav_result["has_data"]:
+                logger.warning(f"标签 '{tag}' 无可见数据")
+                browser.close()
+                return {"success": 0, "failed": 0, "skipped": 0}
+        except Exception as e:
+            logger.error(f"主列表页加载失败: {e}")
+            browser.close()
+            raise
+
+        fund_names = [pos["fundName"] for pos in nav_result["fund_positions"]]
+        logger.info(f"[累计净值] 共 {len(fund_names)} 个基金")
+
+        fund_links = [{"name": name} for name in fund_names if name]
+        logger.info(f"[累计净值] 有效基金 {len(fund_links)} 个")
+
+        success_count = 0
+        failed_count = 0
+
+        # 4. 逐个基金
+        for idx, fund_info in enumerate(fund_links):
+            fund_name = fund_info["name"]
+            safe_name = _safe_filename(fund_name)
+            logger.info(f"[累计净值] 处理基金: {fund_name}")
+
+            print(f"{idx + 1}/{len(fund_links)}: {fund_name}")
+
+            # 点击基金链接，等待新标签页打开
+            page.click(f"a[title='{safe_name}']")
+            page.wait_for_timeout(config.PAGE_WAIT_TIME)
+            pages = context.pages
+
+            new_page = pages[-1]
+            new_page.set_viewport_size(
+                {"width": config.VIEWPORT_WIDTH, "height": config.VIEWPORT_HEIGHT}
+            )
+
+            # 关闭弹窗（若存在）
+            try:
+                new_page.click("text=我已知悉并申请查看", timeout=3000)
+            except Exception:
+                pass
+            new_page.wait_for_timeout(config.PAGE_WAIT_TIME)
+
+            # 切换到历史净值/分红标签
+            try:
+                new_page.click('h2:has-text("历史净值/分红")', timeout=5000)
+            except Exception:
+                pass
+            new_page.wait_for_timeout(config.PAGE_WAIT_TIME)
+
+            # 截图 + OCR
+            screenshot_path, ocr_data = _save_cumulative_screenshot(
+                new_page, tag, fund_name
+            )
+
+            if ocr_data:
+                success_count += 1
+            else:
+                failed_count += 1
+
+            # 关闭详情页，回到列表
+            new_page.close()
+            page.bring_to_front()
+            page.wait_for_timeout(500)
+
+        logger.info(f"[累计净值] 完成：成功 {success_count}，失败 {failed_count}")
+        return {"success": success_count, "failed": failed_count, "skipped": 0}
+
+
+
+# if __name__ == "__main__":
+#     parser = argparse.ArgumentParser(
+#         description="私募排排网抓取工具（支持 OCR 净值识别）"
+#     )
+#     parser.add_argument(
+#         "--tag",
+#         default=None,
+#         help="指定标签: private / public / money（不指定则爬取全部标签）"
+#     )
+#     args = parser.parse_args()
+#
+#     tags_to_crawl = [args.tag] if args.tag else _TAG_KEY_LIST
+#
+#     results = []
+#     for tag in tags_to_crawl:
+#         logger.info(f"开始爬取标签: {tag}")
+#         try:
+#             result = crawl(tag=tag)
+#             result["tag"] = tag
+#             results.append(result)
+#             logger.info(f"\n标签 {tag} 抓取完成: {result}")
+#         except TagNotFoundError as e:
+#             logger.exception(f"\n警告: 标签 '{tag}' 不存在，已跳过")
+#             logger.exception(f"  可用标签: {e.details.get('available_tags', _TAG_KEY_LIST)}")
+#             continue
+#         except CrawlFailedError as e:
+#             logger.exception(f"\n抓取失败 [{tag}]: {e}")
+#             continue
+#         except CookieError as e:
+
 # ===================== 入口 =====================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -923,27 +1394,41 @@ if __name__ == "__main__":
         default=None,
         help="指定标签: private / public / money（不指定则爬取全部标签）"
     )
+    parser.add_argument(
+        "--cumulative",
+        action="store_true",
+        help="爬取每个基金的累计净值（历史净值/分红），保存截图和 CSV"
+    )
     args = parser.parse_args()
 
-    tags_to_crawl = [args.tag] if args.tag else _TAG_KEY_LIST
+    if args.cumulative:
+        # 累计净值爬取测试
+        tag = args.tag or "private"
+        print(f"\n=== 累计净值爬取测试 | 标签={tag} ===")
+        result = crawl_cumulative_nav(tag=tag)
+        print(f"结果: {result}")
+    else:
+        # 原有净值爬取
+        tags_to_crawl = [args.tag] if args.tag else _TAG_KEY_LIST
 
-    results = []
-    for tag in tags_to_crawl:
-        logger.info(f"开始爬取标签: {tag}")
-        try:
-            result = crawl(tag=tag)
-            result["tag"] = tag
-            results.append(result)
-            logger.info(f"\n标签 {tag} 抓取完成: {result}")
-        except TagNotFoundError as e:
-            logger.exception(f"\n警告: 标签 '{tag}' 不存在，已跳过")
-            logger.exception(f"  可用标签: {e.details.get('available_tags', _TAG_KEY_LIST)}")
-            continue
-        except CrawlFailedError as e:
-            logger.exception(f"\n抓取失败 [{tag}]: {e}")
-            continue
-        except CookieError as e:
-            logger.exception(f"\nCookie 错误 [{tag}]: {e.message}")
-            logger.exception("请更新 SIMU_COOKIES 环境变量")
-            exit(1)
+        results = []
+        for tag in tags_to_crawl:
+            logger.info(f"开始爬取标签: {tag}")
+            try:
+                result = crawl(tag=tag)
+                result["tag"] = tag
+                results.append(result)
+                logger.info(f"\n标签 {tag} 抓取完成: {result}")
+            except TagNotFoundError as e:
+                logger.exception(f"\n警告: 标签 '{tag}' 不存在，已跳过")
+                logger.exception(f"  可用标签: {e.details.get('available_tags', _TAG_KEY_LIST)}")
+                continue
+            except CrawlFailedError as e:
+                logger.exception(f"\n抓取失败 [{tag}]: {e}")
+                continue
+            except CookieError as e:
+                logger.exception(f"\nCookie 错误 [{tag}]: {e.message}")
+                logger.exception("请更新 SIMU_COOKIES 环境变量")
+                exit(1)
+
 

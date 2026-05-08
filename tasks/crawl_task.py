@@ -233,14 +233,7 @@ def _import_csv_to_db(date_str: str, tag: str = "private") -> int:
         return 0
 
 
-def _cookie_refresh_wrapper(app=None):
-    """APScheduler 调用的 Cookie 刷新包装函数"""
-    if app is None:
-        from flask import current_app
-        app = current_app._get_current_object()
-    with app.app_context():
-        from auth.cookie import check_and_refresh_cookies
-        check_and_refresh_cookies()
+
 
 
 def init_scheduler(app=None):
@@ -274,14 +267,7 @@ def init_scheduler(app=None):
         replace_existing=True,
     )
 
-    from apscheduler.triggers.interval import IntervalTrigger
-    _scheduler.add_job(
-        func=lambda: _cookie_refresh_wrapper(app=app),
-        trigger=IntervalTrigger(minutes=60),
-        id="cookie_refresh",
-        name="Cookie 自动刷新",
-        replace_existing=True,
-    )
+
 
     _scheduler.start()
     logger.info("定时任务调度器已启动（包含爬取任务和 Cookie 刷新）")

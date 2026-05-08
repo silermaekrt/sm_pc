@@ -63,7 +63,7 @@ class COL:
 
 # ===================== 爬虫常量 =====================
 class CRAWL:
-    HEADLESS = True
+    HEADLESS = False
     COOKIE_DOMAIN = ".simuwang.com"
     PAGE_LOAD_WAIT = "load"
     TABLE_ROW_SELECTOR = "tr.el-table__row"
@@ -143,3 +143,7 @@ MAX_RETRIES = 3; RETRY_DELAY = 2.0; RETRY_BACKOFF = 2.0; OCR_MAX_RETRIES = 2
 # ===================== 初始化目录 =====================
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+
+
+# ===================== 累计净值 =====================
+CUMULATIVE_BASE_DIR = os.getenv("CUMULATIVE_DIR", "cumulative")
