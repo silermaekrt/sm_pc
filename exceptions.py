@@ -70,27 +70,14 @@ class CookieError(CrawlerBaseError):
         super().__init__(message, code="COOKIE_ERROR", details=details)
 
 
-class DataParseError(CrawlerBaseError):
-    """数据解析错误"""
-
-    def __init__(self, message: str, field: str = None, raw_data: str = None):
-        details = {}
-        if field:
-            details["field"] = field
-        if raw_data:
-            # 截断过长的原始数据
-            details["raw_data"] = raw_data[:200] if len(raw_data) > 200 else raw_data
-        super().__init__(message, code="PARSE_ERROR", details=details)
 
 
-class OCRError(CrawlerBaseError):
-    """OCR 识别错误"""
+class CrawlFailedError(CrawlerBaseError):
+    """爬虫执行失败异常（在 tasks/crawl_task.py 和 run_ocr.py 中使用）"""
 
-    def __init__(self, message: str, fund_name: str = None, retry_count: int = 0):
-        details = {"retry_count": retry_count}
-        if fund_name:
-            details["fund_name"] = fund_name
-        super().__init__(message, code="OCR_ERROR", details=details)
+    def __init__(self, message: str, original_error=None):
+        super().__init__(message, code="CRAWL_FAILED", details={})
+        self.original_error = original_error
 
 
 class ScreenshotError(CrawlerBaseError):
@@ -114,40 +101,3 @@ class TagNotFoundError(CrawlerBaseError):
             code="TAG_NOT_FOUND",
             details=details,
         )
-
-
-class CSVError(CrawlerBaseError):
-    """CSV 文件操作错误"""
-
-    def __init__(self, message: str, file_path: str = None):
-        details = {}
-        if file_path:
-            details["file_path"] = file_path
-        super().__init__(message, code="CSV_ERROR", details=details)
-
-
-class ConfigError(CrawlerBaseError):
-    """配置错误"""
-
-    def __init__(self, message: str, config_key: str = None):
-        details = {}
-        if config_key:
-            details["config_key"] = config_key
-        super().__init__(message, code="CONFIG_ERROR", details=details)
-
-
-def format_error_detail(error: Exception) -> dict:
-    """格式化错误详情，用于日志和响应"""
-    if isinstance(error, CrawlerBaseError):
-        return {
-            "type": error.code,
-            "message": error.message,
-            "details": error.details,
-        }
-
-    # 处理非自定义异常
-    return {
-        "type": type(error).__name__.upper(),
-        "message": str(error),
-        "details": {},
-    }

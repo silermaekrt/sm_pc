@@ -24,12 +24,8 @@ def main():
     parser.add_argument("--no-scheduler", action="store_true", help="禁用定时任务")
     args = parser.parse_args()
 
-    from app import app, db
+    from app import app
 
-    # 初始化数据库
-    with app.app_context():
-        db.create_all()
-        print("数据库初始化完成")
     # 启动定时任务（除非明确禁用）
     if not args.no_scheduler and not args.debug:
         try:

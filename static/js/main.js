@@ -1,11 +1,8 @@
 // main.js - 私募基金监控平台前端逻辑
 
 let latestTag = '';
-let fundListTag = '';
 let latestSearchTimeout = null;
 let latestCurrentPage = 1;
-let fundSearchTimeout = null;
-let fundCurrentPage = 1;
 let pollingInterval = null;
 let isCrawlRunning = false;
 let allTags = [];
@@ -18,12 +15,10 @@ function init() {
         .then(data => {
             if (!data.tags || !data.tags.length) return;
             allTags = data.tags;
-            latestTag = fundListTag = data.tags[0].key;
+            latestTag = data.tags[0].key;
             renderTabs('latestTagTabs', latestTag);
-            renderTabs('fundListTagTabs', fundListTag);
-            loadDateFilterForBothSections();
+            loadDateFilterForSection();
             loadLatestFunds(1);
-            loadFunds(1);
             startStatusPolling();
         })
         .catch(err => console.error('加载标签失败:', err));
@@ -37,44 +32,21 @@ function renderTabs(containerId, activeTag) {
 }
 
 function onSectionTagChange(btn) {
-    const containerId = btn.parentElement.id;
-    const tagKey = btn.dataset.tag;
-    if (containerId === 'latestTagTabs') {
-        latestTag = tagKey;
-        loadLatestFunds(1);
-        loadDateFilterForSection('latest');
-        renderTabs('latestTagTabs', latestTag);
-    } else {
-        fundListTag = tagKey;
-        loadFunds(1);
-        loadDateFilterForSection('fundList');
-        renderTabs('fundListTagTabs', fundListTag);
-    }
+    latestTag = btn.dataset.tag;
+    renderTabs('latestTagTabs', latestTag);
+    loadDateFilterForSection();
+    loadLatestFunds(1);
 }
 
-function loadDateFilterForBothSections() {
-    loadDateFilterForSection('latest');
-    loadDateFilterForSection('fundList');
-}
-
-function loadDateFilterForSection(section) {
-    const tag = section === 'latest' ? latestTag : fundListTag;
-    const targetId = section === 'latest' ? 'latestDateFilter' : 'dateFilter';
-    fetch(`/api/crawl/records?per_page=30&tag=${tag}`)
+function loadDateFilterForSection() {
+    fetch(`/api/funds/dates?tag=${latestTag}`)
         .then(r => r.json())
         .then(data => {
-            const dates = [...new Set(data.items.map(r => r.crawl_date))];
-            document.getElementById(targetId).innerHTML =
-                '<option value="">全部日期</option>' + dates.map(d => `<option value="${d}">${d}</option>`).join('');
+            document.getElementById('latestDateFilter').innerHTML =
+                '<option value="">全部日期</option>' +
+                data.available_dates.reverse().map(d => `<option value="${d}">${d}</option>`).join('');
         })
         .catch(err => console.error('加载日期筛选失败:', err));
-}
-
-function onCardToggleChange() {
-    document.getElementById('latestDataCard').style.display =
-        document.getElementById('showLatestCard').checked ? 'block' : 'none';
-    document.getElementById('fundListCard').style.display =
-        document.getElementById('showFundListCard').checked ? 'block' : 'none';
 }
 
 // ==================== 最新数据 ====================
@@ -104,7 +76,7 @@ function loadLatestFunds(page = 1) {
         .then(r => r.json())
         .then(data => {
             renderLatestTable(data.items);
-            renderLatestPagination(data.page, data.pages);
+            renderPagination('latestPagination', data.page, data.pages, 'loadLatestFunds');
             document.getElementById('latestCount').textContent = `共 ${data.total} 条`;
         })
         .catch(() => {
@@ -116,150 +88,45 @@ function loadLatestFunds(page = 1) {
 function renderLatestTable(funds) {
     const tbody = document.getElementById('latestTableBody');
     if (!funds.length) {
-        tbody.innerHTML = '<tr><td colspan="20" class="empty-cell">暂无数据</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="19" class="empty-cell">暂无数据</td></tr>';
         return;
     }
     tbody.innerHTML = funds.map(f =>
         `<tr>
-            <td><strong>${escapeHtml(f.fund_name)}</strong></td>
-            <td>${f.fund_code || '-'}</td>
-            <td>${f.strategy || '-'}</td>
-            <td>${f.net_value_date || '-'}</td>
-            <td><strong>${f.net_value || '-'}</strong></td>
-            <td>${f.net_change || '-'}</td>
-            <td>${f.annual_return || '-'}</td>
-            <td class="${getReturnClass(f.this_year)}">${f.this_year || '-'}</td>
-            <td>${f.last_week || '-'}</td>
-            <td>${f.one_month || '-'}</td>
-            <td>${f.three_month || '-'}</td>
-            <td>${f.six_month || '-'}</td>
-            <td class="${getReturnClass(f.one_year)}">${f.one_year || '-'}</td>
-            <td>${f.two_year || '-'}</td>
-            <td class="${getReturnClass(f.three_year)}">${f.three_year || '-'}</td>
-            <td>${f.five_year || '-'}</td>
-            <td>${f.since_inception || '-'}</td>
-            <td>${f.this_week || '-'}</td>
-            <td class="${getDrawdownClass(f.drawdown)}">${f.drawdown || '-'}</td>
-            <td>${f.crawl_time ? f.crawl_time.substring(0, 16) : '-'}</td>
+            <td><strong>${escapeHtml(f.基金名称 || f.fund_name)}</strong></td>
+            <td>${f.基金代码 || '-'}</td>
+            <td>${f.策略 || '-'}</td>
+            <td>${f.净值日期 || '-'}</td>
+            <td><strong>${f.最新净值 || '-'}</strong></td>
+            <td>${f.净值变动 || '-'}</td>
+            <td>${f.成立来年化 || '-'}</td>
+            <td class="${getReturnClass(f['今年来'])}">${f['今年来'] || '-'}</td>
+            <td>${f['上周'] || '-'}</td>
+            <td>${f['近一月'] || '-'}</td>
+            <td>${f['近三月'] || '-'}</td>
+            <td>${f['近半年'] || '-'}</td>
+            <td class="${getReturnClass(f['近一年'])}">${f['近一年'] || '-'}</td>
+            <td>${f['近两年'] || '-'}</td>
+            <td class="${getReturnClass(f['近三年'])}">${f['近三年'] || '-'}</td>
+            <td>${f['近五年'] || '-'}</td>
+            <td>${f['成立来'] || '-'}</td>
+            <td>${f['本周'] || '-'}</td>
+            <td class="${getDrawdownClass(f['回撤'])}">${f['回撤'] || '-'}</td>
         </tr>`
     ).join('');
 }
 
-function renderLatestPagination(current, total) {
-    const container = document.getElementById('latestPagination');
-    if (total <= 1) { container.innerHTML = ''; return; }
-    let html = '';
-    if (current > 1) html += `<button onclick="loadLatestFunds(${current - 1})">&laquo;</button>`;
-    const maxVisible = 5;
-    let start = Math.max(1, current - Math.floor(maxVisible / 2));
-    let end = Math.min(total, start + maxVisible - 1);
-    if (end - start + 1 < maxVisible) start = Math.max(1, end - maxVisible + 1);
-    if (start > 1) {
-        html += `<button onclick="loadLatestFunds(1)">1</button>`;
-        if (start > 2) html += `<button disabled>...</button>`;
-    }
-    for (let i = start; i <= end; i++)
-        html += `<button class="${i === current ? 'active' : ''}" onclick="loadLatestFunds(${i})">${i}</button>`;
-    if (end < total) {
-        if (end < total - 1) html += `<button disabled>...</button>`;
-        html += `<button onclick="loadLatestFunds(${total})">${total}</button>`;
-    }
-    if (current < total) html += `<button onclick="loadLatestFunds(${current + 1})">&raquo;</button>`;
-    container.innerHTML = html;
+// ==================== 导出功能 ====================
+function exportLatestData(format) {
+    const menu = document.getElementById('latestExportMenu');
+    if (menu) menu.style.display = 'none';
+    const dateFilter = document.getElementById('latestDateFilter').value;
+    const search = document.getElementById('latestSearchInput').value;
+    const params = new URLSearchParams({ format, tag: latestTag });
+    if (dateFilter) params.set('date', dateFilter);
+    if (search) params.set('name', search);
+    window.location.href = `/api/export?${params}`;
 }
-
-// ==================== 基金列表 ====================
-function debounceFundSearch() {
-    clearTimeout(fundSearchTimeout);
-    fundSearchTimeout = setTimeout(fundSearch, 300);
-}
-
-function fundSearch() {
-    fundCurrentPage = 1;
-    loadFunds(1);
-}
-
-function loadFunds(page = 1) {
-    fundCurrentPage = page;
-    const search = document.getElementById('fundSearchInput').value.trim();
-    const dateFilter = document.getElementById('dateFilter').value;
-    const [sort, order] = document.getElementById('sortSelect').value.split('-');
-    const params = new URLSearchParams({ page, per_page: 20, tag: fundListTag, sort, order });
-    if (search) params.append('name', search);
-    if (dateFilter) params.append('crawl_date', dateFilter);
-
-    document.getElementById('fundTableBody').innerHTML =
-        '<tr><td colspan="20" class="loading-cell"><div class="loading"></div></td></tr>';
-
-    fetch(`/api/funds?${params}`)
-        .then(r => r.json())
-        .then(data => {
-            renderFundsTable(data.items);
-            renderPagination(data.page, data.pages);
-            document.getElementById('recordCount').textContent = `共 ${data.total} 条记录`;
-        })
-        .catch(() => {
-            document.getElementById('fundTableBody').innerHTML =
-                '<tr><td colspan="20" class="empty-cell">加载失败</td></tr>';
-        });
-}
-
-function renderFundsTable(funds) {
-    const tbody = document.getElementById('fundTableBody');
-    if (!funds.length) {
-        tbody.innerHTML = '<tr><td colspan="20" class="empty-cell">暂无数据</td></tr>';
-        return;
-    }
-    tbody.innerHTML = funds.map(f =>
-        `<tr>
-            <td><strong>${escapeHtml(f.fund_name)}</strong></td>
-            <td>${f.fund_code || '-'}</td>
-            <td>${f.strategy || '-'}</td>
-            <td>${f.net_value_date || '-'}</td>
-            <td><strong>${f.net_value || '-'}</strong></td>
-            <td>${f.net_change || '-'}</td>
-            <td>${f.annual_return || '-'}</td>
-            <td class="${getReturnClass(f.this_year)}">${f.this_year || '-'}</td>
-            <td>${f.last_week || '-'}</td>
-            <td>${f.one_month || '-'}</td>
-            <td>${f.three_month || '-'}</td>
-            <td>${f.six_month || '-'}</td>
-            <td class="${getReturnClass(f.one_year)}">${f.one_year || '-'}</td>
-            <td>${f.two_year || '-'}</td>
-            <td class="${getReturnClass(f.three_year)}">${f.three_year || '-'}</td>
-            <td>${f.five_year || '-'}</td>
-            <td>${f.since_inception || '-'}</td>
-            <td>${f.this_week || '-'}</td>
-            <td class="${getDrawdownClass(f.drawdown)}">${f.drawdown || '-'}</td>
-            <td>${f.crawl_time ? f.crawl_time.substring(0, 16) : '-'}</td>
-        </tr>`
-    ).join('');
-}
-
-function renderPagination(current, total) {
-    const container = document.getElementById('pagination');
-    if (total <= 1) { container.innerHTML = ''; return; }
-    let html = '';
-    if (current > 1) html += `<button onclick="loadFunds(${current - 1})">&laquo;</button>`;
-    const maxVisible = 5;
-    let start = Math.max(1, current - Math.floor(maxVisible / 2));
-    let end = Math.min(total, start + maxVisible - 1);
-    if (end - start + 1 < maxVisible) start = Math.max(1, end - maxVisible + 1);
-    if (start > 1) {
-        html += `<button onclick="loadFunds(1)">1</button>`;
-        if (start > 2) html += `<button disabled>...</button>`;
-    }
-    for (let i = start; i <= end; i++)
-        html += `<button class="${i === current ? 'active' : ''}" onclick="loadFunds(${i})">${i}</button>`;
-    if (end < total) {
-        if (end < total - 1) html += `<button disabled>...</button>`;
-        html += `<button onclick="loadFunds(${total})">${total}</button>`;
-    }
-    if (current < total) html += `<button onclick="loadFunds(${current + 1})">&raquo;</button>`;
-    container.innerHTML = html;
-}
-
-// ==================== 抓取控制 ====================
 function showCrawlModal() {
     const group = document.getElementById('crawlTagsGroup');
     if (group.children.length > 0) {
@@ -321,7 +188,6 @@ function restartPolling(interval) {
                     setTimeout(() => {
                         switchPollingMode('idle');
                         loadLatestFunds(latestCurrentPage);
-                        loadFunds(fundCurrentPage);
                     }, 2000);
                 }
             })
@@ -350,19 +216,12 @@ function updateCrawlStatus(status) {
 
 // ==================== 导出功能 ====================
 function toggleLatestExportMenu() {
-    const menu = document.getElementById('latestExportMenu');
-    menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-    document.getElementById('fundListExportMenu').style.display = 'none';
-}
-
-function toggleFundListExportMenu() {
-    const menu = document.getElementById('fundListExportMenu');
-    menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-    document.getElementById('latestExportMenu').style.display = 'none';
+    toggleDropdown('latestExportMenu');
 }
 
 function exportLatestData(format) {
-    document.getElementById('latestExportMenu').style.display = 'none';
+    const menu = document.getElementById('latestExportMenu');
+    if (menu) menu.style.display = 'none';
     const dateFilter = document.getElementById('latestDateFilter').value;
     const search = document.getElementById('latestSearchInput').value;
     const params = new URLSearchParams({ format, tag: latestTag });
@@ -371,102 +230,16 @@ function exportLatestData(format) {
     window.location.href = `/api/export?${params}`;
 }
 
-function exportFundListData(format) {
-    document.getElementById('fundListExportMenu').style.display = 'none';
-    const dateFilter = document.getElementById('dateFilter').value;
-    const search = document.getElementById('fundSearchInput').value;
-    const params = new URLSearchParams({ format, tag: fundListTag });
-    if (dateFilter) params.set('date', dateFilter);
-    if (search) params.set('name', search);
-    window.location.href = `/api/export?${params}`;
-}
-
 document.addEventListener('click', e => {
     const latestDropdown = document.getElementById('latestExportDropdown');
-    const fundListDropdown = document.getElementById('fundListExportDropdown');
     if (latestDropdown && !latestDropdown.contains(e.target))
         document.getElementById('latestExportMenu').style.display = 'none';
-    if (fundListDropdown && !fundListDropdown.contains(e.target))
-        document.getElementById('fundListExportMenu').style.display = 'none';
-    if (e.target === document.getElementById('loginModal')) closeLoginModal();
     if (e.target === document.getElementById('crawlModal')) closeCrawlModal();
 });
 
 document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { closeLoginModal(); closeCrawlModal(); }
+    if (e.key === 'Escape') closeCrawlModal();
 });
-
-// ==================== 登录设置 ====================
-function showLoginModal() {
-    document.getElementById('loginModal').classList.add('show');
-    loadCredentialStatus();
-}
-
-function closeLoginModal() {
-    document.getElementById('loginModal').classList.remove('show');
-}
-
-function loadCredentialStatus() {
-    fetch('/api/auth/credentials')
-        .then(r => r.json())
-        .then(data => {
-            const statusEl = document.getElementById('loginStatus');
-            const credEl = document.getElementById('credentialStatus');
-            if (!data.has_credentials) {
-                statusEl.innerHTML = '<span class="hint-info">尚未保存登录凭证</span>';
-                credEl.innerHTML = '';
-                return;
-            }
-            document.getElementById('loginUsername').value = data.username || '';
-            document.getElementById('loginInterval').value = data.refresh_interval || 60;
-            let html = '<span class="hint-success">✓ 凭证已保存</span>';
-            if (data.last_refresh) html += ` &nbsp;上次刷新: ${data.last_refresh.substring(0, 16)}`;
-            if (data.last_error) html += `<br><span class="hint-error">上次错误: ${data.last_error}</span>`;
-            statusEl.innerHTML = html;
-        })
-        .catch(() => {
-            document.getElementById('loginStatus').innerHTML = '<span class="hint-error">加载状态失败</span>';
-        });
-}
-
-function submitLogin(event) {
-    event.preventDefault();
-    const statusEl = document.getElementById('loginStatus');
-    statusEl.innerHTML = '<span class="hint-info">保存中...</span>';
-    fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            username: document.getElementById('loginUsername').value.trim(),
-            password: document.getElementById('loginPassword').value,
-            refresh_interval: parseInt(document.getElementById('loginInterval').value) || 60
-        })
-    })
-        .then(r => r.json())
-        .then(data => {
-            if (data.error) statusEl.innerHTML = `<span class="hint-error">${data.error}</span>`;
-            else {
-                statusEl.innerHTML = '<span class="hint-success">✓ ' + data.message + '</span>';
-                setTimeout(closeLoginModal, 1500);
-            }
-        })
-        .catch(() => statusEl.innerHTML = '<span class="hint-error">请求失败，请重试</span>');
-}
-
-function manualRefreshCookies() {
-    const statusEl = document.getElementById('loginStatus');
-    statusEl.innerHTML = '<span class="hint-info">正在刷新 Cookie...</span>';
-    fetch('/api/auth/refresh', { method: 'POST' })
-        .then(r => r.json())
-        .then(data => {
-            if (data.error) statusEl.innerHTML = `<span class="hint-error">${data.error}</span>`;
-            else {
-                statusEl.innerHTML = '<span class="hint-success">✓ ' + data.message + '</span>';
-                setTimeout(loadCredentialStatus, 2000);
-            }
-        })
-        .catch(() => statusEl.innerHTML = '<span class="hint-error">请求失败</span>');
-}
 
 // ==================== 工具函数 ====================
 function escapeHtml(text) {

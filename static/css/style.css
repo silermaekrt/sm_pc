@@ -381,6 +381,250 @@ body {
 .tag-tab:hover { background: #f0f0f0; }
 .tag-tab.active { background: var(--primary-color); color: white; border-color: var(--primary-color); }
 
+/* ==================== 时间序列分析 ==================== */
+.analysis-controls {
+    padding: 16px 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: flex-end;
+}
+
+.control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.control-group label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.control-group select,
+.control-group input {
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 14px;
+    background: white;
+    cursor: pointer;
+    min-width: 140px;
+}
+
+.control-group select:focus,
+.control-group input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.control-group input[type="date"] {
+    min-width: 130px;
+}
+
+.date-range-custom {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.date-range-custom input[type="date"] {
+    min-width: 130px;
+}
+
+.date-range-custom span {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.metric-checkboxes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+}
+
+.metric-checkboxes label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.metric-checkboxes input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--primary-color);
+}
+
+.control-apply-btn {
+    padding: 8px 20px;
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.2s;
+    white-space: nowrap;
+}
+
+.control-apply-btn:hover {
+    background: var(--primary-hover);
+}
+
+.btn-crawl {
+    background: var(--accent-color, #e67e22);
+}
+
+.btn-crawl:hover {
+    background: var(--accent-hover, #d35400);
+}
+
+.btn-crawl:disabled {
+    background: #aaa;
+    cursor: not-allowed;
+}
+
+.btn-danger {
+    background: #e74c3c;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.btn-danger:hover {
+    background: #c0392b;
+}
+
+/* 统计卡片行 */
+.stat-cards-row {
+    display: flex;
+    gap: 12px;
+    padding: 16px 20px;
+    flex-wrap: wrap;
+}
+
+.stat-card {
+    flex: 1;
+    min-width: 140px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 14px 16px;
+    text-align: center;
+    border: 1px solid var(--border-color);
+}
+
+.stat-card-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    font-weight: 500;
+}
+
+.stat-card-value {
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.stat-card-value.positive { color: #e74c3c; }
+.stat-card-value.negative { color: #27ae60; }
+.stat-card-value.neutral { color: var(--text-color); }
+.stat-card-value.loading {
+    font-size: 16px;
+    color: var(--text-secondary);
+    font-weight: 400;
+}
+
+.stat-card-sub {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+.stat-card-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.help-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #bdc3c7;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    cursor: pointer;
+    line-height: 1;
+    position: relative;
+    flex-shrink: 0;
+    user-select: none;
+}
+
+.help-icon:hover::after {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #2c3e50;
+    color: #ecf0f1;
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.5;
+    padding: 8px 10px;
+    border-radius: 6px;
+    white-space: pre-wrap;
+    width: 220px;
+    z-index: 1000;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.help-icon:hover::before {
+    content: '';
+    position: absolute;
+    bottom: calc(100% + 2px);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 4px solid transparent;
+    border-top-color: #2c3e50;
+    z-index: 1001;
+    pointer-events: none;
+}
+
+/* 图表容器 */
+.chart-container {
+    padding: 16px 20px;
+}
+
+.chart-placeholder {
+    height: 300px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    font-size: 14px;
+    border: 1px dashed var(--border-color);
+    border-radius: 6px;
+    margin: 8px 0;
+}
+
 /* ==================== 复选框 ==================== */
 .checkbox-group { display: flex; gap: 20px; padding: 10px 0; }
 
@@ -399,6 +643,121 @@ body {
     accent-color: var(--primary-color);
 }
 
+/* ==================== 主 Tab 切换 ==================== */
+.tab-bar {
+    display: flex;
+    gap: 4px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.tab-btn {
+    padding: 8px 20px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px 6px 0 0;
+    background: white;
+    font-size: 14px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: all 0.15s;
+    border-bottom: none;
+}
+
+.tab-btn:hover { background: #f0f0f0; }
+.tab-btn.active { background: var(--primary-color); color: white; border-color: var(--primary-color); }
+
+/* Tab 内容区 */
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* ==================== 基金对比复选框 ==================== */
+.compare-checkboxes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    max-height: 120px;
+    overflow-y: auto;
+    padding: 4px 0;
+}
+
+.compare-checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 13px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: #fafafa;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.compare-checkbox-item:hover { background: #f0f0f0; }
+.compare-checkbox-item input[type="checkbox"] { accent-color: var(--primary-color); cursor: pointer; }
+
+/* 已选基金标签 */
+.compare-selected-funds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+.compare-selected-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--primary-color);
+    color: white;
+    border-radius: 14px;
+    padding: 3px 10px 3px 10px;
+    font-size: 13px;
+}
+.compare-selected-remove {
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    opacity: 0.8;
+}
+.compare-selected-remove:hover { opacity: 1; }
+
+/* 搜索栏 */
+.compare-fund-list {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 6px;
+    background: #fafafa;
+}
+.compare-search-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+.compare-search-row input {
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 13px;
+}
+.compare-search-results {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 6px;
+    background: #fafafa;
+}
+.btn-small { padding: 4px 10px; font-size: 12px; }
+.search-result-badge { color: #27ae60; font-size: 11px; margin-left: 4px; }
+
+/* 统计卡片尺寸微调（收益率/风险指标混排时） */
+.stat-card.mini { min-width: 110px; padding: 10px 12px; }
+.stat-card.mini .stat-card-value { font-size: 18px; }
+
 @media (max-width: 768px) {
     .container { padding: 12px; }
     .header { flex-direction: column; gap: 12px; }
@@ -408,4 +767,8 @@ body {
     .filter-box { display: flex; gap: 8px; }
     .filter-box select { flex: 1; }
     .data-table th, .data-table td { padding: 8px 10px; font-size: 13px; }
+    .analysis-controls { flex-direction: column; align-items: stretch; }
+    .control-group { min-width: 100%; }
+    .stat-cards-row { flex-direction: column; }
+    .stat-card { min-width: unset; }
 }

@@ -3,18 +3,13 @@
 app.py - Flask Web 应用入口
 
 私募基金监控平台 API 服务
-
-模块结构：
-  routes/   - API 路由（page, fund, crawl, export, auth）
-  tasks/    - 爬虫任务函数与统一调度器
-  auth/     - 登录认证与 Cookie 管理
-  app_state - 全局状态（避免循环导入）
 """
+
+from dotenv import load_dotenv
+load_dotenv()
 
 from flask import Flask
 from app_logging import get_logger
-
-from models import db
 
 import config
 from app_state import crawl_status
@@ -22,29 +17,18 @@ from routes import register_routes
 
 logger = get_logger(__name__)
 
-
 # ===================== Flask 应用配置 =====================
 app = Flask(__name__)
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///funds.db"
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["JSON_AS_ASCII"] = False
-
-db.init_app(app)
 
 # 初始化 TAG_MODEL_MAP（必须在路由注册前完成）
 config.init_tag_model_map()
 
-
 # ===================== 注册路由 =====================
 register_routes(app)
 
-
 # ===================== 应用启动 =====================
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
-        logger.info("数据库初始化完成")
-
     import sys
     if "--debug" not in sys.argv:
         try:

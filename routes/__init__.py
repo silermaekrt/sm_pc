@@ -9,6 +9,7 @@ from routes.page import page_bp
 from routes.fund import fund_bp
 from routes.crawl import crawl_bp
 from routes.export import export_bp
+from routes.benchmark import benchmark_bp
 
 
 
@@ -17,4 +18,5 @@ def register_routes(app):
     app.register_blueprint(fund_bp, url_prefix="/api")
     app.register_blueprint(crawl_bp, url_prefix="/api")
     app.register_blueprint(export_bp, url_prefix="/api")
+    app.register_blueprint(benchmark_bp, url_prefix="/api")
 

@@ -2,14 +2,19 @@
 __pycache__/
 *.py[cod]
 *.pyc
+*.pyo
+*.pyd
 *.egg-info/
 dist/
 build/
 *.egg
+*.whl
 
 # Virtual env
 .venv/
 venv/
+env/
+.env/
 
 # IDE / OS
 .idea/
@@ -18,16 +23,41 @@ venv/
 *.swo
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Project specific
+# Project specific - data directories
 data/
 screenshots/
 logs/
-*.csv
+cumulative/
+base/
+indices/
 
-# Environment
-.env
-.env.local
+# Temporary/debug files
+*.csv
+*.log
+*.log.*
 
 # Playwright
 .playwright/
+playwright-report/
+test-results/
+
+# Benchmark export files (auto-generated)
+benchmark_*.csv
+drawdown_result.txt
+*_debug*.txt
+
+# Database
+instance/
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
